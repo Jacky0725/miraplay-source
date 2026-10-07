@@ -59,7 +59,7 @@ export async function loginChengguodj(username, password) {
     if (Number(result?.status) !== 1 || typeof token !== 'string' || !token) {
         throw new Error(String(result?.msg || '登录失败'));
     }
-    await database.push(DB_PATH, { username: account, token });
+    await database.push(DB_PATH, { username: account, token, password: String(password) });
     return { username: account };
 }
 

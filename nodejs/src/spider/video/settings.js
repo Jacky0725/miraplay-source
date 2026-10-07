@@ -18,18 +18,22 @@ border-radius:9px;background:#151a23;color:white;font-size:16px}button{border:0;
 padding:11px 17px;margin:17px 8px 0 0;background:#5df2b8;color:#12201b;font-weight:700;font-size:15px}
 button.secondary{background:#444f60;color:white}button:disabled{opacity:.6}#message{min-height:22px;white-space:pre-wrap}
 </style></head><body><main><h1>配置中心</h1>
-<p class="muted">账号只提交给橙果短剧网站。此页面运行在 MiraPlay 本机；公开脚本中不包含你的账号、密码或登录令牌。</p>
+<p class="muted">此页面运行在 MiraPlay 本机。按你的设置，密码会在本机明文保存和显示；公开脚本中不包含你的账号、密码或登录令牌。</p>
 <section class="card"><h2>橙果短剧</h2><p id="status" class="muted">正在读取状态…</p>
 <form id="login"><label for="username">用户名</label><input id="username" autocomplete="username" required>
-<label for="password">密码</label><input id="password" type="password" autocomplete="current-password" required>
+<label for="password">密码（明文显示）</label><input id="password" type="text" autocomplete="off" required>
 <button id="submit" type="submit">登录</button><button id="logout" type="button" class="secondary">退出登录</button></form>
 <p id="message" role="status"></p></section>
 <section class="card"><h2>其他影视源</h2><p class="muted">以后新增的站点会作为独立条目出现在同一猫源菜单中，并在此处提供各自的账号配置。</p></section>
 </main><script>
 const secret=${JSON.stringify(secret)};
 const status=document.getElementById('status'),message=document.getElementById('message');
-async function refresh(){const r=await fetch('website/api/status',{cache:'no-store'});const d=await r.json();
-status.textContent=d.loggedIn?'已登录：'+d.username:'未登录';}
+async function refresh(){const r=await fetch('website/api/status',{cache:'no-store',
+headers:{'X-Config-Token':secret}});const d=await r.json();
+if(!r.ok)throw new Error(d.message||'无法读取状态');
+status.textContent=d.loggedIn?'已登录：'+d.username:'未登录';
+document.getElementById('username').value=d.username||'';
+document.getElementById('password').value=d.password||'';}
 async function submit(url,body){message.textContent='处理中…';const r=await fetch(url,{method:'POST',
 headers:{'Content-Type':'application/json','X-Config-Token':secret},body:JSON.stringify(body)});
 const d=await r.json();message.textContent=d.message||'';await refresh();}
@@ -37,7 +41,7 @@ document.getElementById('login').addEventListener('submit',async e=>{e.preventDe
 const button=document.getElementById('submit');button.disabled=true;
 try{await submit('website/api/login',{username:document.getElementById('username').value,
 password:document.getElementById('password').value});}catch{message.textContent='连接失败，请稍后重试';}
-finally{document.getElementById('password').value='';button.disabled=false;}});
+finally{button.disabled=false;}});
 document.getElementById('logout').addEventListener('click',async()=>{try{await submit('website/api/logout',{});}catch{
 message.textContent='连接失败，请稍后重试';}});refresh().catch(()=>{status.textContent='无法读取状态';});
 </script></body></html>`;
@@ -71,10 +75,12 @@ export default {
             .header('Cache-Control', 'no-store')
             .header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'")
             .type('text/html; charset=utf-8').send(page(secret)));
-        fastify.get('/website/api/status', async (_request, reply) => {
+        fastify.get('/website/api/status', async (request, reply) => {
+            if (!authorized(request)) return reply.code(403).send({ message: '配置页面已过期，请重新打开' });
             const session = await savedSession();
             return reply.header('Cache-Control', 'no-store').send({
                 loggedIn: !!session?.token, username: session?.username || '',
+                password: session?.password || '',
             });
         });
         fastify.post('/website/api/login', async (request, reply) => {
