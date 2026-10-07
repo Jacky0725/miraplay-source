@@ -35,7 +35,7 @@ function decodePacket(packet) {
                 padding: CryptoJS.pad.Pkcs7,
             }).toString(CryptoJS.enc.Utf8);
         if (!value) throw new Error('网站返回了无法解码的登录响应');
-        return JSON.parse(value);
+        return decodePacket(JSON.parse(value));
     }
     return packet;
 }
@@ -51,6 +51,7 @@ export async function loginChengguodj(username, password) {
         username: account, password: String(password),
     }, {
         timeout: 15000,
+        validateStatus: () => true,
         headers: { 'Content-Type': 'application/json', Origin: SITE, Referer: `${SITE}/` },
     });
     const result = decodePacket(response.data);
