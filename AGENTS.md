@@ -6,6 +6,8 @@
 
 - 站点规则在 `nodejs/src/spider/video/chengguodj.js`。不要直接编辑编译产物 `index.js`。
 - `nodejs/src/router.js` 注册该规则；`meta.key` 是 `chengguodj`，`meta.type` 是 `3`。
+- `nodejs/src/spider/video/settings.js` 注册独立的 `配置|中心` 站点，并通过 MiraPlay 的 `openInternalWebview` 动作打开本机配置页。新影视源作为独立 spider 添加到 `nodejs/src/router.js` 的 `spiders` 数组。
+- `nodejs/src/settings/credentials.js` 处理橙果短剧登录。本机数据库只保存用户名和网站返回的令牌，不保存密码；公开源码只含网站自身公开发布的协议参数，不得写入用户凭据。
 - 规则通过 Fastify 注册 `/init`、`/home`、`/category`、`/detail`、`/play`、`/search`。
 - 列表项使用 `vod_id`、`vod_name`、`vod_pic`、`vod_remarks`。详情的播放线路与选集分别放在 `vod_play_from`、`vod_play_url`；选集之间用 `#`，名称与播放 ID 之间用 `$`。
 - 网站的 HLS 地址带时效参数。`/detail` 保留剧集 ID，`/play` 每次请求对应播放页并取新的 `source_url`，返回 `parse: 0` 和可播放 URL。

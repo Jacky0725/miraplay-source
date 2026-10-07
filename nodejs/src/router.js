@@ -1,6 +1,8 @@
 import chengguodj from './spider/video/chengguodj.js';
+import settings from './spider/video/settings.js';
 
-const spiders = [chengguodj];
+// Add each future video source here so it appears beside 配置中心 in MiraPlay.
+const spiders = [settings, chengguodj];
 const spiderPrefix = '/spider';
 
 /**

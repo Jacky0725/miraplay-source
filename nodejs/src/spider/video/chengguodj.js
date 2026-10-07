@@ -1,5 +1,6 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import { savedSession } from '../../settings/credentials.js';
 
 const BASE = 'https://chengguodj.com';
 const CHANNELS = [
@@ -14,12 +15,14 @@ const CHANNELS = [
 
 async function fetchPage(path) {
     const url = new URL(path, BASE).href;
+    const session = await savedSession();
     const response = await axios.get(url, {
         timeout: 15000,
         headers: {
             'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
             Referer: BASE + '/',
             Accept: 'text/html,application/xhtml+xml',
+            ...(session?.token ? { Authorization: `Bearer ${session.token}` } : {}),
         },
     });
     return cheerio.load(response.data);
