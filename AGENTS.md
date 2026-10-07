@@ -25,7 +25,7 @@
 
 - `.github/workflows/pages.yml` 在提交到 `main` 后自动安装依赖、编译，并将四个 `index.*` 文件发布到 GitHub Pages。
 - Pages 的发布来源保持为 **GitHub Actions**；不要切换为 **Deploy from a branch**。
-- MiraPlay 中使用固定地址：`https://jacky0725.github.io/miraplay-source/index.js.md5`。更新后地址不变，在应用里重载源即可。
+- MiraPlay 中使用已由用户确认正常的固定地址：`https://jacky0725.github.io/miraplay-source/refresh-20261007/index.js.md5`。工作流同时发布根目录与该目录，后续更新须保持两者同步。若应用重载后仍显示旧内容，可删除旧源后用该地址重新添加。
 - 发布后确认 `index.js.md5` 可访问，并且其内容与公开 `index.js` 的 MD5 一致。
 
 这是公开仓库。不要将 Cookie、访问令牌或其他密钥写进源码、配置或工作流。
