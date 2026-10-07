@@ -29,3 +29,9 @@
 - 发布后确认 `index.js.md5` 可访问，并且其内容与公开 `index.js` 的 MD5 一致。
 
 这是公开仓库。不要将 Cookie、访问令牌或其他密钥写进源码、配置或工作流。
+
+## TVBox 适配
+
+- `nodejs/src/tvbox-server.js` 在 NAS 上运行，将同一份 `chengguodj.js` 规则包装为 TVBox `type: 1` HTTP JSON 接口。
+- `/tvbox.json` 返回 TVBox 配置，`/api.php/provide/vod/` 返回分类、列表、搜索、详情，`/play` 在播放时取得新 HLS 地址并跳转。
+- GitHub Pages 只发布 MiraPlay 的静态 Node.js 包；TVBox HTTP 服务需由 NAS 的 Node.js 或 Docker 运行。TVBox 使用说明见 `TVBOX.md`。

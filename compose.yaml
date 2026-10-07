@@ -1,0 +1,8 @@
+services:
+  tvbox:
+    build: ./nodejs
+    restart: unless-stopped
+    ports:
+      - "9988:9988"
+    environment:
+      PORT: "9988"

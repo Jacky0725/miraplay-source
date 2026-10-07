@@ -17,3 +17,5 @@ GitHub Pages 发布完成后，在 MiraPlay 添加 **CatPawOpen 源**，填写�
 此接口使用 [CatPawOpen](https://github.com/CatPawApp/CatPawOpen) 的 Node.js 运行结构。目标网站的页面结构变化后，规则可能需要同步调整。
 
 完整的编译和发布约定见 [AGENTS.md](AGENTS.md)。
+
+若要在 TVBox 上使用同一规则，见 [TVBOX.md](TVBOX.md)；TVBox 版本需要在 NAS 上运行独立的 HTTP 接口。
