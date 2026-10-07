@@ -25,6 +25,8 @@ jobs:
         run: |
           mkdir -p site-dist
           cp nodejs/dist/index.js nodejs/dist/index.js.md5 nodejs/dist/index.config.js nodejs/dist/index.config.js.md5 site-dist/
+          mkdir -p site-dist/refresh-20261007
+          cp nodejs/dist/index.js nodejs/dist/index.js.md5 nodejs/dist/index.config.js nodejs/dist/index.config.js.md5 site-dist/refresh-20261007/
           cp site/index.html site-dist/index.html
           touch site-dist/.nojekyll
       - uses: actions/configure-pages@v5
