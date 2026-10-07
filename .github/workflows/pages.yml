@@ -1,0 +1,46 @@
+name: Build and publish MiraPlay source
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: nodejs/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: nodejs
+      - name: Build CatPawOpen bundle and MD5 files
+        run: npm run build
+        working-directory: nodejs
+      - name: Prepare site
+        run: |
+          mkdir -p site-dist
+          cp nodejs/dist/index.js nodejs/dist/index.js.md5 nodejs/dist/index.config.js nodejs/dist/index.config.js.md5 site-dist/
+          cp site/index.html site-dist/index.html
+          touch site-dist/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site-dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
