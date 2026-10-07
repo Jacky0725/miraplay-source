@@ -3,11 +3,13 @@ import * as cheerio from 'cheerio';
 
 const BASE = 'https://chengguodj.com';
 const CHANNELS = [
+    ['recommend', '推荐'],
     ['yuanchuang', '原创'],
     ['mogai', '魔改'],
     ['manju', 'AI漫剧'],
     ['zhenren', '真人短剧'],
     ['aiduanju', 'AI短剧'],
+    ['browse', '分类'],
 ];
 
 async function fetchPage(path) {
@@ -28,6 +30,15 @@ function absolute(url) {
     return new URL(url, BASE).href;
 }
 
+function imageUrl(url) {
+    const full = absolute(url);
+    if (!full) return '';
+    if (full.startsWith(`${BASE}/_img/`)) return full;
+    const extension = new URL(full).pathname.match(/\.(jpe?g|png|webp|gif|avif)$/i)?.[1] || 'jpeg';
+    const encoded = Buffer.from(full).toString('base64url');
+    return `${BASE}/_img/${encoded}.${extension}`;
+}
+
 function nuxtData($) {
     const raw = $('#__NUXT_DATA__').html();
     if (!raw) return [];
@@ -44,7 +55,7 @@ function cards($) {
         const slug = data[item.slug];
         const cover = data[item.cover];
         if (typeof slug === 'string' && cover && typeof cover.url === 'number') {
-            covers.set(slug, absolute(data[cover.url]));
+            covers.set(slug, imageUrl(data[cover.url]));
         }
     }
     $('article[data-xpch="card-drama"]').each((_i, node) => {
@@ -55,7 +66,7 @@ function cards($) {
         seen.add(slug);
         const img = card.find('img[alt]').first();
         const name = img.attr('alt') || card.find('div.truncate').first().text().trim();
-        const cover = absolute(img.attr('src') || img.attr('data-src')) || covers.get(slug) || '';
+        const cover = covers.get(slug) || imageUrl(img.attr('src') || img.attr('data-src'));
         const mark = card.find('.ph-cover span').last().text().trim();
         list.push({ vod_id: slug, vod_name: name, vod_pic: cover, vod_remarks: mark });
     });
@@ -86,8 +97,9 @@ async function category(inReq) {
     const id = String(inReq.body?.id || '');
     if (!CHANNELS.some(([key]) => key === id)) return { page: 1, pagecount: 1, list: [] };
     const page = Math.max(1, Number(inReq.body?.page) || 1);
-    const $ = await fetchPage(`/${id}?page=${page}`);
-    return { page, pagecount: pageCount($, page), list: cards($) };
+    const path = id === 'recommend' ? '/' : id === 'browse' ? '/browse' : `/${id}`;
+    const $ = await fetchPage(`${path}${path === '/' ? '' : `?page=${page}`}`);
+    return { page, pagecount: id === 'recommend' ? 1 : pageCount($, page), list: cards($) };
 }
 
 function dramaFromNuxt(data, slug) {
@@ -104,7 +116,7 @@ async function detail(inReq) {
     const data = nuxtData($);
     const drama = dramaFromNuxt(data, slug);
     const coverObject = drama && data[drama.cover];
-    const cover = coverObject && typeof coverObject.url === 'number' ? absolute(data[coverObject.url]) : '';
+    const cover = coverObject && typeof coverObject.url === 'number' ? imageUrl(data[coverObject.url]) : '';
     const episodes = [];
     $(`[data-xpch="episode-grid"] a[href^="/play/${slug}/"]`).each((_i, a) => {
         const href = $(a).attr('href') || '';
