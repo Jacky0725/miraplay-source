@@ -45,7 +45,9 @@ async function init() { return {}; }
 
 async function home() {
     const data = await api('/api/home/homePage');
-    const featured = [...(data.top_list || []), ...((data.modules?.list || []).flatMap((module) => module.items || []))];
+    const featured = [...(data.top_list || []), ...(data.modules?.list || [])
+        .filter((module) => MODULES.some(([id]) => id === `module:${module.id}`))
+        .flatMap((module) => module.items || [])];
     const seen = new Set();
     return {
         class: [

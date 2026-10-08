@@ -2,9 +2,10 @@ import chengguodj from './spider/video/chengguodj.js';
 import settings from './spider/video/settings.js';
 import hub51 from './spider/video/hub51.js';
 import xiangjiao from './spider/video/xiangjiao.js';
+import yeguodj from './spider/video/yeguodj.js';
 
 // Add each future video source here so it appears beside 配置中心 in MiraPlay.
-const spiders = [settings, chengguodj, hub51, xiangjiao];
+const spiders = [settings, chengguodj, hub51, xiangjiao, yeguodj];
 const spiderPrefix = '/spider';
 
 /**
