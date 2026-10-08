@@ -1,9 +1,47 @@
+import axios from 'axios';
+import { randomUUID } from 'crypto';
 import { getXiangjiao, playXiangjiao } from '../../settings/xiangjiao-credentials.js';
 
 const SITE = 'https://xiangjiaoai.ai';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EXCLUDED = /未成年|小学生|初中|高中|萝莉|幼女|正太|校园|师生|儿女|儿子|女儿|继女|继子|妹妹|弟弟|换脸|乱伦/;
 const cursorCache = new Map();
+const playlistCache = new Map();
+const PLAYLIST_LIFETIME = 4 * 60 * 60 * 1000;
+
+async function compatiblePlaylist(manifestUrl, request) {
+    const response = await axios.get(manifestUrl, {
+        timeout: 15000,
+        responseType: 'text',
+        headers: { Referer: `${SITE}/`, 'User-Agent': 'Mozilla/5.0' },
+    });
+    const original = String(response.data || '');
+    if (!original.startsWith('#EXTM3U')) throw new Error('香蕉短剧返回了无效的播放清单');
+    if (!original.includes('URI="data:')) return manifestUrl;
+
+    const id = randomUUID();
+    const base = `http://127.0.0.1:${request.server.address().port}/spider/xiangjiao/3/hls/${id}`;
+    const keys = [];
+    const lines = original.split(/\r?\n/).map((line) => {
+        if (line.startsWith('#EXT-X-KEY:')) {
+            return line.replace(/URI="data:[^",]+;base64,([A-Za-z0-9+/=]+)"/g, (_match, encoded) => {
+                const key = Buffer.from(encoded, 'base64');
+                if (key.length !== 16) throw new Error('香蕉短剧播放密钥格式不受支持');
+                const index = keys.push(key) - 1;
+                return `URI="${base}/key/${index}"`;
+            });
+        }
+        if (line && !line.startsWith('#')) return new URL(line, manifestUrl).href;
+        return line;
+    });
+    if (!keys.length) return manifestUrl;
+    const now = Date.now();
+    for (const [entryId, entry] of playlistCache) {
+        if (entry.expiresAt < now) playlistCache.delete(entryId);
+    }
+    playlistCache.set(id, { body: lines.join('\n'), keys, expiresAt: now + PLAYLIST_LIFETIME });
+    return `${base}/playlist.m3u8`;
+}
 
 function allowed(item) {
     const text = [item?.name, item?.title, item?.description, item?.primary_category?.name,
@@ -110,7 +148,8 @@ async function play(request) {
         return { parse: 0, url: '' };
     }
     const url = await playXiangjiao(episodeId);
-    return { parse: 0, url, header: { Referer: `${SITE}/`, 'User-Agent': 'Mozilla/5.0' } };
+    const playableUrl = await compatiblePlaylist(url, request);
+    return { parse: 0, url: playableUrl, header: { Referer: `${SITE}/`, 'User-Agent': 'Mozilla/5.0' } };
 }
 
 async function search(request) {
@@ -131,5 +170,22 @@ export default {
         fastify.post('/detail', detail);
         fastify.post('/play', play);
         fastify.post('/search', search);
+        fastify.get('/hls/:id/playlist.m3u8', async (request, reply) => {
+            const entry = playlistCache.get(request.params.id);
+            if (!entry || entry.expiresAt < Date.now()) return reply.code(404).send();
+            return reply.header('Cache-Control', 'no-store')
+                .header('Access-Control-Allow-Origin', '*')
+                .type('application/vnd.apple.mpegurl').send(entry.body);
+        });
+        fastify.get('/hls/:id/key/:index', async (request, reply) => {
+            const entry = playlistCache.get(request.params.id);
+            const index = Number(request.params.index);
+            if (!entry || entry.expiresAt < Date.now() || !Number.isInteger(index) || !entry.keys[index]) {
+                return reply.code(404).send();
+            }
+            return reply.header('Cache-Control', 'no-store')
+                .header('Access-Control-Allow-Origin', '*')
+                .type('application/octet-stream').send(entry.keys[index]);
+        });
     },
 };
