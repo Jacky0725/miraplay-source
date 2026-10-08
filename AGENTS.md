@@ -7,6 +7,7 @@
 - 站点规则在 `nodejs/src/spider/video/chengguodj.js`。不要直接编辑编译产物 `index.js`。
 - `nodejs/src/router.js` 注册该规则；`meta.key` 是 `chengguodj`，`meta.type` 是 `3`。
 - `nodejs/src/spider/video/yingtan.js` 是由用户提供的 `影探.py` 改写的独立站点，注册到同一 `spiders` 数组。该站点 CMS 仅提供 HTTP 接口，部分播放线路依赖原脚本指定的第三方解析服务；不要将其依赖误写成项目自有服务。
+- `nodejs/src/spider/video/hub51.js` 是 51短剧的独立站点，使用网站浏览器脚本公开的 API 参数读取 AES-CBC 响应；每次播放重新取得有时效的 HLS 地址。网站的 API 域名与协议参数变化时需更新。
 - `nodejs/src/spider/video/settings.js` 注册独立的 `配置|中心` 站点，并通过 MiraPlay 的 `openInternalWebview` 动作打开本机配置页。新影视源作为独立 spider 添加到 `nodejs/src/router.js` 的 `spiders` 数组。
 - `nodejs/src/settings/credentials.js` 处理橙果短剧登录。按用户明确要求，本机数据库明文保存用户名、密码和网站返回的令牌，配置页明文显示密码；公开源码只含网站自身公开发布的协议参数，不得写入用户凭据。返回密码的本机状态接口必须校验配置页令牌，并禁止缓存。
 - 规则通过 Fastify 注册 `/init`、`/home`、`/category`、`/detail`、`/play`、`/search`。
