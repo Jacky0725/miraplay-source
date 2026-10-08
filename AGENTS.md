@@ -10,7 +10,7 @@
 - 51短剧图片直接使用网站 API 返回的图片 URL。先前生成的 `51hub.com/_img/...` 地址实测返回 404，不要恢复该代理方式。
 - `nodejs/src/settings/hub51-credentials.js` 处理 51短剧用户名和密码登录，把站点返回的令牌附加在 51短剧的 API 请求体。配置中心为该站点提供独立的状态、登录和退出入口。本机数据库按用户此前要求明文保存并显示密码；不得把实际凭据或令牌提交到公开仓库。
 - `nodejs/src/spider/video/xiangjiao.js` 是香蕉短剧独立站点。`nodejs/src/settings/xiangjiao-credentials.js` 管理游客会话以及本机保存的账号会话，播放时向网站申请临时播放地址。站点的 HLS 清单含 `data:` 格式的 AES-128 密钥，规则将清单和密钥暂存在本机并提供 HTTP 地址给播放器；视频片段仍直接从网站 CDN 读取。筛除含未成年人暗示等不适合接入的条目和分类。
-- `nodejs/src/spider/video/yeguodj.js` 是野果短剧独立站点。`nodejs/src/settings/yeguodj-credentials.js` 管理本机账号，沿用站点公开的 AES-CBC 接口参数。筛除含未成年人暗示及强迫等标签的条目，正片地址在播放时重新请求。
+- `nodejs/src/spider/video/yeguodj.js` 是野果短剧独立站点。`nodejs/src/settings/yeguodj-credentials.js` 管理本机账号，沿用站点公开的 AES-CBC 接口参数。部分封面为 AES-CBC 加密图片，规则在本机按站点公开的媒体密钥解码后提供 HTTP 图片地址；已是普通图片的封面直接转发。筛除含未成年人暗示及强迫等标签的条目，正片地址在播放时重新请求。
 - `nodejs/src/spider/video/javday.js` 和 `nodejs/src/spider/video/dj91.js` 是独立站点；配套登录状态在 `nodejs/src/settings/` 对应文件中。两者必须在列表、详情和播放三处应用 `content-filter.js`，不得扩大到含未成年人暗示、乱伦或强迫内容的整站无筛选接入。播放时只提取站点提供的 HLS 地址，不运行网页广告脚本。
 - 视频规则不调用各站的广告列表 API 或网页广告脚本，不将广告条目加入播放列表。上游若在正片 HLS 中拼接广告，不能仅凭规则可靠跳过。
 - `nodejs/src/spider/video/settings.js` 注册独立的 `配置|中心` 站点，并通过 MiraPlay 的 `openInternalWebview` 动作打开本机配置页。新影视源作为独立 spider 添加到 `nodejs/src/router.js` 的 `spiders` 数组。
