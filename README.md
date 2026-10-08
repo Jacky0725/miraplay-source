@@ -34,6 +34,10 @@ GitHub Pages 发布完成后，在 MiraPlay 添加 **CatPawOpen 源**，填写�
 
 **JAVDAY** 和 **91短剧** 在配置中心各有独立登录入口。91短剧的登录会话和 JAVDAY 的网站 Cookie 仅保存在 MiraPlay 本机；账号密码沿用配置中心的明文保存与显示方式。若 JAVDAY 登录页要求验证码，需先在网站完成验证，当前配置中心会给出提示。
 
+## 内容复核清单
+
+在 `nodejs` 目录运行 `node tools/review-source-metadata.mjs`，可生成仅保存在本机的 `review-output/moderation-review-日期.csv` 和覆盖范围说明 `review-output/coverage.json`。清单列出当前会被筛选的条目 ID、出现分类、扫描页码、触发层级和触发词，不收录完整标题或播放地址，也不会提交到公开仓库。默认扫描 91短剧全部公开分类、JAVDAY 的 AI短剧和无码分类全部页面，以及 JAVDAY 最近更新和有码分类前 3 页。可通过 `JAVDAY_PAGE_LIMIT` 或 `DJ91_PAGE_LIMIT` 环境变量限制扫描页数。清单仅依据文字元数据；修改标题前仍应核对实际视频内容。
+
 这些 CatPawOpen 规则只请求剧目和正片播放地址，不请求网站的广告列表，也不运行网页中的弹窗或贴片广告脚本。若上游将广告直接拼入正片媒体流，规则无法可靠地区分并删除该片段。
 
 以后新增影视站点时，在 `nodejs/src/spider/video/` 增加独立规则并注册到 `nodejs/src/router.js` 的 `spiders` 数组。新增站点会显示在同一 CatPawOpen 源菜单中；需要账号的站点再为其接入配置中心。仅填写另一个网站的网址并不能自动生成该网站的解析规则。
