@@ -49,7 +49,7 @@ button.secondary{background:#444f60;color:white}button:disabled{opacity:.6}#mess
 <label for="passwordYg">密码（明文显示）</label><input id="passwordYg" type="text" autocomplete="off" required>
 <button id="submitYg" type="submit">登录</button><button id="logoutYg" type="button" class="secondary">退出登录</button></form>
 <p id="messageYg" role="status"></p></section>
-<section class="card"><h2>JAVDAY</h2><p id="statusJd" class="muted">正在读取状态…</p>
+<section class="card"><h2>JAVDAY</h2><p class="muted">公开内容无需登录，账号配置可选。</p><p id="statusJd" class="muted">正在读取状态…</p>
 <form id="loginJd"><label for="usernameJd">用户名</label><input id="usernameJd" autocomplete="username" required>
 <label for="passwordJd">密码（明文显示）</label><input id="passwordJd" type="text" autocomplete="off" required>
 <button id="submitJd" type="submit">登录</button><button id="logoutJd" type="button" class="secondary">退出登录</button></form>

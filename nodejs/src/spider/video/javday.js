@@ -63,6 +63,17 @@ function detailInfo($) {
         if (!allowedAdultMetadata(name || '正片')) return;
         episodes.push({ title: cleanEpisodeTitle(name, `第${episodes.length + 1}集`), url: url.href });
     });
+    if (!episodes.length) {
+        const scripts = $('script:not([src])').map((_index, node) => $(node).html() || '').get().join('\n');
+        for (const match of scripts.matchAll(/\burl\s*:\s*(['"])(https:\/\/[^'"\s]+\.m3u8(?:\?[^'"]*)?)\1/g)) {
+            let url;
+            try { url = new URL(match[2]); } catch { continue; }
+            if (/(^|\.)javday\.homes$/i.test(url.hostname)) {
+                episodes.push({ title: '正片', url: url.href });
+                break;
+            }
+        }
+    }
     return { title, description, episodes,
         cover: image($('meta[property="og:image"]').attr('content')) };
 }
