@@ -7,7 +7,9 @@
 - 站点规则在 `nodejs/src/spider/video/chengguodj.js`。不要直接编辑编译产物 `index.js`。
 - `nodejs/src/router.js` 注册该规则；`meta.key` 是 `chengguodj`，`meta.type` 是 `3`。
 - `nodejs/src/spider/video/hub51.js` 是 51短剧的独立站点，使用网站浏览器脚本公开的 API 参数读取 AES-CBC 响应；每次播放重新取得有时效的 HLS 地址。网站的 API 域名与协议参数变化时需更新。
+- 51短剧图片直接使用网站 API 返回的图片 URL。先前生成的 `51hub.com/_img/...` 地址实测返回 404，不要恢复该代理方式。
 - `nodejs/src/settings/hub51-credentials.js` 处理 51短剧用户名和密码登录，把站点返回的令牌附加在 51短剧的 API 请求体。配置中心为该站点提供独立的状态、登录和退出入口。本机数据库按用户此前要求明文保存并显示密码；不得把实际凭据或令牌提交到公开仓库。
+- `nodejs/src/spider/video/xiangjiao.js` 是香蕉短剧独立站点。`nodejs/src/settings/xiangjiao-credentials.js` 管理游客会话以及本机保存的账号会话，播放时向网站申请临时播放地址。筛除含未成年人暗示等不适合接入的条目和分类。
 - `nodejs/src/spider/video/settings.js` 注册独立的 `配置|中心` 站点，并通过 MiraPlay 的 `openInternalWebview` 动作打开本机配置页。新影视源作为独立 spider 添加到 `nodejs/src/router.js` 的 `spiders` 数组。
 - `nodejs/src/settings/credentials.js` 处理橙果短剧登录。按用户明确要求，本机数据库明文保存用户名、密码和网站返回的令牌，配置页明文显示密码；公开源码只含网站自身公开发布的协议参数，不得写入用户凭据。返回密码的本机状态接口必须校验配置页令牌，并禁止缓存。
 - 规则通过 Fastify 注册 `/init`、`/home`、`/category`、`/detail`、`/play`、`/search`。

@@ -19,9 +19,7 @@ function image(value) {
     try {
         const url = new URL(String(value), SITE);
         if (!['https:', 'http:'].includes(url.protocol)) return '';
-        if (url.origin === SITE && url.pathname.startsWith('/_img/')) return url.href;
-        const extension = url.pathname.match(/\.(jpe?g|png|webp|gif|avif)$/i)?.[1] || 'jpeg';
-        return `${SITE}/_img/${Buffer.from(url.href).toString('base64url')}.${extension}`;
+        return url.href;
     } catch { return ''; }
 }
 
