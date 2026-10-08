@@ -1,11 +1,6 @@
-import axios from 'axios';
-import CryptoJS from 'crypto-js';
+import { request51 } from '../../settings/hub51-credentials.js';
 
 const SITE = 'https://51hub.com';
-const API = 'https://api.51dj1.com/api.php';
-// These values are published in the site's browser JavaScript and describe its API format.
-const KEY = CryptoJS.enc.Utf8.parse('2acf7e91e9864673');
-const IV = CryptoJS.enc.Utf8.parse('1c29882d3ddfcfd6');
 const MODULES = [
     ['module:1', '本周精选'],
     ['module:4', '本周更新'],
@@ -16,25 +11,7 @@ const MODULES = [
 const UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1';
 
 async function api(path, params = {}) {
-    const response = await axios.post(`${API}${path}`, new URLSearchParams(params), {
-        timeout: 20000,
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': UA,
-            Origin: SITE,
-            Referer: `${SITE}/`,
-        },
-    });
-    const envelope = response.data;
-    if (Number(envelope?.errcode) !== 0 || typeof envelope?.data !== 'string') {
-        throw new Error(`51短剧接口错误: ${envelope?.errcode ?? 'invalid response'}`);
-    }
-    const json = CryptoJS.AES.decrypt(envelope.data, KEY, {
-        iv: IV, mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7,
-    }).toString(CryptoJS.enc.Utf8);
-    const result = JSON.parse(json);
-    if (Number(result?.status) !== 1) throw new Error(`51短剧: ${result?.msg || 'request failed'}`);
-    return result.data || {};
+    return request51(path, params);
 }
 
 function image(value) {
