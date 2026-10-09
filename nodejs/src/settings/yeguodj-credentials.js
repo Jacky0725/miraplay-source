@@ -20,15 +20,25 @@ export async function requestYeguodj(path, params = {}, token = undefined) {
     const body = { ...params };
     const accessToken = token === undefined ? session?.token : token;
     if (accessToken) body.token = accessToken;
-    const response = await axios.post(`${API}${path}`, new URLSearchParams(body), {
-        timeout: 20000,
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            Origin: SITE,
-            Referer: `${SITE}/`,
-            'User-Agent': 'Mozilla/5.0',
-        },
-    });
+    let response;
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            response = await axios.post(`${API}${path}`, new URLSearchParams(body), {
+                timeout: 20000,
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    Origin: SITE,
+                    Referer: `${SITE}/`,
+                    'User-Agent': 'Mozilla/5.0',
+                },
+            });
+            break;
+        } catch (error) {
+            if (attempt || !/^\/api\/(?:home\/|theater\/|search\/)/.test(path) ||
+                ![502, 503, 504].includes(error.response?.status)) throw error;
+            await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+    }
     const packet = response.data;
     if (Number(packet?.errcode) !== 0 || typeof packet?.data !== 'string') {
         throw new Error(`野果短剧接口错误: ${packet?.errcode ?? 'invalid response'}`);

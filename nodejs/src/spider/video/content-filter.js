@@ -7,6 +7,26 @@ const CLEAR_INCEST = /亂倫|乱伦|近親|incest/i;
 const CLEAR_ASSAULT = /強姦|强奸|迷奸|rape|nonconsensual/i;
 const COERCION_CONTEXT = /強迫|强迫|監禁|监禁|凌辱|催眠/i;
 const SEXUAL_CONTEXT = /性交|性爱|性愛|做爱|做愛|性侵|性虐|中出|內射|内射|射精|榨精|種付け|セックス|SEX|口交|フェラ|自慰|高潮|淫|裸|性玩具|调教|調教|操弄|强奸|強姦/i;
+const STRICT_EXTRA = /學生|学生|校園|校园|學園|学園|學校|学校|高校|高中|初中|中學|中学|小學|小学|少女|制服|schoolgirl|schoolboy|student|campus|high\s*school|teen/i;
+const MODE_PATH = '/settings/content-filter-mode';
+let database;
+let strictMode = false;
+
+export async function useContentFilterDatabase(db) {
+    database = db;
+    try { strictMode = (await db.getData(MODE_PATH)) === 'strict'; }
+    catch { strictMode = false; }
+}
+
+export function contentFilterMode() { return strictMode ? 'strict' : 'standard'; }
+
+export async function setContentFilterMode(mode) {
+    if (!['standard', 'strict'].includes(mode)) throw new Error('不支持的筛选模式');
+    if (!database) throw new Error('本机配置存储尚未初始化');
+    await database.push(MODE_PATH, mode);
+    strictMode = mode === 'strict';
+    return contentFilterMode();
+}
 
 function metadataText(values) {
     return values.flat(Infinity).filter((value) => value != null)
@@ -30,9 +50,14 @@ export function flaggedAdultTerms(...values) {
     return [...new Set(flags)];
 }
 
-export function allowedAdultMetadata(...values) {
+export function allowedBaselineMetadata(...values) {
     const text = metadataText(values);
     return !!text.trim() && flaggedAdultTerms(...values).length === 0;
+}
+
+export function allowedAdultMetadata(...values) {
+    return allowedBaselineMetadata(...values) &&
+        !(strictMode && STRICT_EXTRA.test(metadataText(values)));
 }
 
 export function cleanEpisodeTitle(value, fallback) {

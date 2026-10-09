@@ -11,6 +11,7 @@ import {
 } from '../../settings/yeguodj-credentials.js';
 import { loginJavday, logoutJavday, savedJavdaySession, useJavdayDatabase } from '../../settings/javday-credentials.js';
 import { login91, logout91, saved91Session, use91Database } from '../../settings/dj91-credentials.js';
+import { contentFilterMode, setContentFilterMode, useContentFilterDatabase } from './content-filter.js';
 
 const ENTRY = { vod_id: 'settings', vod_name: '配置中心', vod_pic: '', vod_remarks: '管理网站账号' };
 const PATH = '/spider/baseset/3';
@@ -25,7 +26,7 @@ main{max-width:580px;margin:auto;padding:24px}h1{font-size:26px;margin:10px 0 8p
 label{display:block;margin:14px 0 7px}input{box-sizing:border-box;width:100%;padding:12px;border:1px solid #455062;
 border-radius:9px;background:#151a23;color:white;font-size:16px}button{border:0;border-radius:9px;
 padding:11px 17px;margin:17px 8px 0 0;background:#5df2b8;color:#12201b;font-weight:700;font-size:15px}
-button.secondary{background:#444f60;color:white}button:disabled{opacity:.6}#message,#message51,#messageXj,#messageYg,#messageJd,#message91{min-height:22px;white-space:pre-wrap}
+button.secondary{background:#444f60;color:white}button:disabled{opacity:.6}#message,#message51,#messageXj,#messageYg,#messageJd,#message91,#filterMessage{min-height:22px;white-space:pre-wrap}
 </style></head><body><main><h1>配置中心</h1>
 <p class="muted">此页面运行在 MiraPlay 本机。按你的设置，密码会在本机明文保存和显示；公开脚本中不包含你的账号、密码或登录令牌。</p>
 <section class="card"><h2>橙果短剧</h2><p id="status" class="muted">正在读取状态…</p>
@@ -59,6 +60,9 @@ button.secondary{background:#444f60;color:white}button:disabled{opacity:.6}#mess
 <label for="password91">密码（明文显示）</label><input id="password91" type="text" autocomplete="off" required>
 <button id="submit91" type="submit">登录</button><button id="logout91" type="button" class="secondary">退出登录</button></form>
 <p id="message91" role="status"></p></section>
+<section class="card"><h2>内容筛选</h2><p class="muted">JAVDAY 和 91短剧可选严格筛选。开启后会额外隐藏含“学生”“校园”“制服”等泛化词的条目；关闭后仍保留明确的未成年人色情及其他高风险内容筛选。</p>
+<label><input id="strictFilter" type="checkbox" style="width:auto;margin-right:8px">开启严格筛选</label>
+<p id="filterMessage" role="status"></p></section>
 <section class="card"><h2>其他影视源</h2><p class="muted">以后新增的站点会作为独立条目出现在同一猫源菜单中，并在此处提供各自的账号配置。</p></section>
 </main><script>
 const secret=${JSON.stringify(secret)};
@@ -148,6 +152,17 @@ function connectAccount(suffix,path){
  refresh().catch(()=>{status.textContent='无法读取状态';});
 }
 connectAccount('Jd','jd');connectAccount('91','91');
+async function refreshFilter(){const r=await fetch('website/api/filter',{cache:'no-store',headers:{'X-Config-Token':secret}});
+const d=await r.json();if(!r.ok)throw new Error(d.message||'无法读取筛选设置');
+document.getElementById('strictFilter').checked=d.mode==='strict';}
+document.getElementById('strictFilter').addEventListener('change',async e=>{
+const notice=document.getElementById('filterMessage');e.target.disabled=true;notice.textContent='保存中…';
+try{const r=await fetch('website/api/filter',{method:'POST',headers:{'Content-Type':'application/json','X-Config-Token':secret},
+body:JSON.stringify({mode:e.target.checked?'strict':'standard'})});const d=await r.json();
+if(!r.ok)throw new Error(d.message||'保存失败');notice.textContent='已保存，请刷新相关影视源';}
+catch(error){notice.textContent=error.message;await refreshFilter().catch(()=>{});}
+finally{e.target.disabled=false;}});
+refreshFilter().catch(()=>{document.getElementById('filterMessage').textContent='无法读取筛选设置';});
 </script></body></html>`;
 }
 
@@ -160,6 +175,7 @@ export default {
         useYeguodjDatabase(fastify.db);
         useJavdayDatabase(fastify.db);
         use91Database(fastify.db);
+        await useContentFilterDatabase(fastify.db);
         const secret = randomBytes(32).toString('hex');
         const authorized = (request) => {
             const supplied = String(request.headers['x-config-token'] || '');
@@ -184,6 +200,15 @@ export default {
             .header('Cache-Control', 'no-store')
             .header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'")
             .type('text/html; charset=utf-8').send(page(secret)));
+        fastify.get('/website/api/filter', async (request, reply) => {
+            if (!authorized(request)) return reply.code(403).send({ message: '配置页面已过期，请重新打开' });
+            return reply.header('Cache-Control', 'no-store').send({ mode: contentFilterMode() });
+        });
+        fastify.post('/website/api/filter', async (request, reply) => {
+            if (!authorized(request)) return reply.code(403).send({ message: '配置页面已过期，请重新打开' });
+            try { return reply.header('Cache-Control', 'no-store').send({ mode: await setContentFilterMode(request.body?.mode) }); }
+            catch (error) { return reply.code(400).send({ message: String(error.message || '保存失败') }); }
+        });
         fastify.get('/website/api/status', async (request, reply) => {
             if (!authorized(request)) return reply.code(403).send({ message: '配置页面已过期，请重新打开' });
             const session = await savedSession();

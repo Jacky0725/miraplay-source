@@ -24,7 +24,10 @@ function image(value, request) {
         if (!['https:', 'http:'].includes(url.protocol)) return '';
         if (url.hostname !== IMAGE_HOST) return url.href;
         const encoded = Buffer.from(url.href).toString('base64url');
-        return `http://127.0.0.1:${request.server.address().port}/spider/dj91/3/image/${encoded}`;
+        const port = request.server.address?.()?.port || request.server.server?.address()?.port ||
+            request.raw.socket.localPort;
+        if (!port) return '';
+        return `http://127.0.0.1:${port}/spider/dj91/3/image?url=${encoded}`;
     } catch { return ''; }
 }
 
@@ -145,9 +148,9 @@ export default {
         fastify.post('/detail', detail);
         fastify.post('/play', play);
         fastify.post('/search', search);
-        fastify.get('/image/:encoded', async (request, reply) => {
+        fastify.get('/image', async (request, reply) => {
             let url;
-            try { url = new URL(Buffer.from(request.params.encoded, 'base64url').toString('utf8')); }
+            try { url = new URL(Buffer.from(String(request.query?.url || ''), 'base64url').toString('utf8')); }
             catch { return reply.code(400).send(); }
             if (url.protocol !== 'https:' || url.hostname !== IMAGE_HOST) return reply.code(400).send();
             let buffer = imageCache.get(url.href);

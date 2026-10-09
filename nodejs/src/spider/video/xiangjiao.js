@@ -1,10 +1,10 @@
 import axios from 'axios';
 import { randomUUID } from 'crypto';
 import { getXiangjiao, playXiangjiao } from '../../settings/xiangjiao-credentials.js';
+import { allowedBaselineMetadata } from './content-filter.js';
 
 const SITE = 'https://xiangjiaoai.ai';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const EXCLUDED = /未成年|小学生|初中|高中|萝莉|幼女|正太|校园|师生|儿女|儿子|女儿|继女|继子|妹妹|弟弟|换脸|乱伦/;
 const cursorCache = new Map();
 const playlistCache = new Map();
 const PLAYLIST_LIFETIME = 4 * 60 * 60 * 1000;
@@ -47,7 +47,7 @@ function allowed(item) {
     const text = [item?.name, item?.title, item?.description, item?.primary_category?.name,
         ...(item?.categories || []).map((x) => x?.name), ...(item?.tags || []).map((x) => x?.name)]
         .filter(Boolean).join(' ');
-    return !EXCLUDED.test(text);
+    return allowedBaselineMetadata(text);
 }
 
 function image(value) {

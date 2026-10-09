@@ -57,8 +57,10 @@ function cards($) {
         if (!item || typeof item !== 'object' || typeof item.slug !== 'number' || typeof item.cover !== 'number') continue;
         const slug = data[item.slug];
         const cover = data[item.cover];
-        if (typeof slug === 'string' && cover && typeof cover.url === 'number') {
-            covers.set(slug, imageUrl(data[cover.url]));
+        if (typeof slug === 'string' && cover) {
+            const source = typeof cover === 'string' ? cover :
+                typeof cover.url === 'number' ? data[cover.url] : '';
+            covers.set(slug, imageUrl(source));
         }
     }
     $('article[data-xpch="card-drama"]').each((_i, node) => {
@@ -78,9 +80,10 @@ function cards($) {
 
 function pageCount($, current) {
     let max = current;
-    $('a[href*="page="]').each((_i, a) => {
+    $('a[href*="page"]').each((_i, a) => {
         const href = $(a).attr('href') || '';
-        const value = Number(new URL(href, BASE).searchParams.get('page'));
+        const value = Number(href.match(/\/page-(\d+)(?:\/|\?|$)/)?.[1] ||
+            new URL(href, BASE).searchParams.get('page'));
         if (Number.isFinite(value)) max = Math.max(max, value);
     });
     return max;
@@ -101,7 +104,7 @@ async function category(inReq) {
     if (!CHANNELS.some(([key]) => key === id)) return { page: 1, pagecount: 1, list: [] };
     const page = Math.max(1, Number(inReq.body?.page) || 1);
     const path = id === 'recommend' ? '/' : id === 'browse' ? '/browse' : `/${id}`;
-    const $ = await fetchPage(`${path}${path === '/' ? '' : `?page=${page}`}`);
+    const $ = await fetchPage(page === 1 || path === '/' ? path : `${path}/page-${page}`);
     return { page, pagecount: id === 'recommend' ? 1 : pageCount($, page), list: cards($) };
 }
 
@@ -119,7 +122,8 @@ async function detail(inReq) {
     const data = nuxtData($);
     const drama = dramaFromNuxt(data, slug);
     const coverObject = drama && data[drama.cover];
-    const cover = coverObject && typeof coverObject.url === 'number' ? imageUrl(data[coverObject.url]) : '';
+    const cover = typeof coverObject === 'string' ? imageUrl(coverObject) :
+        coverObject && typeof coverObject.url === 'number' ? imageUrl(data[coverObject.url]) : '';
     const episodes = [];
     $(`[data-xpch="episode-grid"] a[href^="/play/${slug}/"]`).each((_i, a) => {
         const href = $(a).attr('href') || '';

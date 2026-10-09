@@ -72,11 +72,18 @@ async function access() {
 
 export async function getXiangjiao(path) {
     const stored = await savedXiangjiaoSession();
-    const response = await axios.get(`${SITE}${path}`, {
-        timeout: 15000,
-        headers: { Accept: 'application/json', ...(fresh(stored) ? { Authorization: `Bearer ${stored.access_token}` } : {}) },
-    });
-    return response.data?.data;
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            const response = await axios.get(`${SITE}${path}`, {
+                timeout: 15000,
+                headers: { Accept: 'application/json', ...(fresh(stored) ? { Authorization: `Bearer ${stored.access_token}` } : {}) },
+            });
+            return response.data?.data;
+        } catch (error) {
+            if (attempt || ![502, 503, 504].includes(error.response?.status)) throw error;
+            await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+    }
 }
 
 export async function playXiangjiao(episodeId) {

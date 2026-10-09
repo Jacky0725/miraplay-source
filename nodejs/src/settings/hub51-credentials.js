@@ -25,15 +25,25 @@ export async function request51(path, params = {}, token = undefined) {
     const accessToken = token === undefined ? session?.token : token;
     const body = { ...params };
     if (accessToken) body.token = accessToken;
-    const response = await axios.post(`${API}${path}`, new URLSearchParams(body), {
-        timeout: 20000,
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': UA,
-            Origin: SITE,
-            Referer: `${SITE}/`,
-        },
-    });
+    let response;
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            response = await axios.post(`${API}${path}`, new URLSearchParams(body), {
+                timeout: 20000,
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'User-Agent': UA,
+                    Origin: SITE,
+                    Referer: `${SITE}/`,
+                },
+            });
+            break;
+        } catch (error) {
+            if (attempt || !/^\/api\/(?:home\/|theater\/|search\/)/.test(path) ||
+                ![502, 503, 504].includes(error.response?.status)) throw error;
+            await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+    }
     const envelope = response.data;
     if (Number(envelope?.errcode) !== 0 || typeof envelope?.data !== 'string') {
         throw new Error(`51短剧接口错误: ${envelope?.errcode ?? 'invalid response'}`);

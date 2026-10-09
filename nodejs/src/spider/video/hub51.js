@@ -1,4 +1,5 @@
 import { request51 } from '../../settings/hub51-credentials.js';
+import { publicCover } from './cover-url.js';
 
 const SITE = 'https://51hub.com';
 const MODULES = [
@@ -15,12 +16,7 @@ async function api(path, params = {}) {
 }
 
 function image(value) {
-    if (!value) return '';
-    try {
-        const url = new URL(String(value), SITE);
-        if (!['https:', 'http:'].includes(url.protocol)) return '';
-        return url.href;
-    } catch { return ''; }
+    return publicCover(value, SITE);
 }
 
 function card(item) {
