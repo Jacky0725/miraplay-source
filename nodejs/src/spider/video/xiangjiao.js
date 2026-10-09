@@ -155,7 +155,7 @@ async function play(request) {
 async function search(request) {
     const keyword = String(request.body?.wd || '').trim();
     const page = Math.max(1, Number(request.body?.page) || 1);
-    if (!keyword || EXCLUDED.test(keyword) || page > 1) return { page, pagecount: 1, list: [] };
+    if (!keyword || !allowedBaselineMetadata(keyword) || page > 1) return { page, pagecount: 1, list: [] };
     const query = new URLSearchParams({ q: keyword, limit: '30' });
     const data = await getXiangjiao(`/api/search?${query}`);
     return { page, pagecount: 1, list: cards(data?.items) };
