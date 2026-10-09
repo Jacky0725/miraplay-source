@@ -11,7 +11,7 @@
 - `nodejs/src/settings/hub51-credentials.js` 处理 51短剧用户名和密码登录，把站点返回的令牌附加在 51短剧的 API 请求体。配置中心为该站点提供独立的状态、登录和退出入口。本机数据库按用户此前要求明文保存并显示密码；不得把实际凭据或令牌提交到公开仓库。
 - `nodejs/src/spider/video/xiangjiao.js` 是香蕉短剧独立站点。`nodejs/src/settings/xiangjiao-credentials.js` 管理游客会话以及本机保存的账号会话，播放时向网站申请临时播放地址。站点的 HLS 清单含 `data:` 格式的 AES-128 密钥，规则将清单和密钥暂存在本机并提供 HTTP 地址给播放器；视频片段仍直接从网站 CDN 读取。列表、分类和详情使用共同的基础内容筛选，避免泛化词导致首页全空。
 - `nodejs/src/spider/video/yeguodj.js` 是野果短剧独立站点。`nodejs/src/settings/yeguodj-credentials.js` 管理本机账号，沿用站点公开的 AES-CBC 接口参数。加密封面使用 `cover-url.js` 指向普通图片域名，不依赖本机图片代理。筛除含未成年人暗示及强迫等标签的条目，正片地址在播放时重新请求。
-- `nodejs/src/spider/video/javday.js` 和 `nodejs/src/spider/video/dj91.js` 是独立站点；配套登录状态在 `nodejs/src/settings/` 对应文件中。两者必须在列表、详情和播放三处应用 `content-filter.js`：单独的“学生”“校园”“少女”“制服”等泛化词不构成拦截条件；明确的未成年人指向，或学生场景与具体性行为同时出现，以及明确的乱伦和性侵内容仍须筛除。播放时只提取站点提供的 HLS 地址，不运行网页广告脚本。
+- `nodejs/src/spider/video/javday.js` 和 `nodejs/src/spider/video/dj91.js` 是独立站点；配套登录状态在 `nodejs/src/settings/` 对应文件中。两者必须在列表、详情和播放三处应用 `content-filter.js`：普通模式不凭“学生”“校园”“少女”“制服”等泛化词拦截；不要把不同元数据字段或句段中的词拼成一个风险短语。明确的未成年人指向、同一描述中明确的未成年人场景与性行为，以及明确的乱伦和性侵内容仍须筛除。播放时只提取站点提供的 HLS 地址，不运行网页广告脚本。
 - 配置中心的“严格筛选”默认关闭，可手动开启附加泛化词筛选；基础筛选始终生效。本机数据库保存模式，公开脚本不保存个人设置。
 - 91短剧加密封面通过本机 `/image?url=` 路由解码；不得把长编码地址放进路径参数，Fastify 默认路径参数长度会使图片路由返回 404。
 - 橙果短剧分类翻页使用 `/page-2` 等路径，不能使用 `?page=2`；搜索页封面在 Nuxt 数据中可能是字符串或带 `url` 的对象。
