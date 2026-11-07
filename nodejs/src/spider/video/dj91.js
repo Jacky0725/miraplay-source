@@ -1,6 +1,7 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import { request91 } from '../../settings/dj91-credentials.js';
+import { randomUUID } from 'crypto';
+import { request91, saved91Session } from '../../settings/dj91-credentials.js';
 import { allowedAdultMetadata, cleanEpisodeTitle } from './content-filter.js';
 
 const SITE = 'https://91dj66.com';
@@ -13,6 +14,8 @@ const CHANNELS = [
 const IMAGE_HOST = 'd3n8qx4rvy4vol.cloudfront.net';
 const IMAGE_KEY = Buffer.from('2019ysapp7527');
 const imageCache = new Map();
+const playlistCache = new Map();
+const PLAYLIST_LIFETIME = 15 * 60 * 1000;
 
 async function page(path) {
     return cheerio.load((await request91(path)).data);
@@ -53,6 +56,40 @@ function cards($, request) {
 
 function pagecount($, current) {
     return Math.max(current, Number($('[data-catalog-pagination]').attr('data-total')) || current);
+}
+
+async function authenticatedPlaylist(url, request) {
+    const manifestUrl = new URL(url);
+    if (manifestUrl.origin !== SITE) return url;
+    const response = await request91(url, { accept: 'application/vnd.apple.mpegurl' });
+    const original = String(response.data || '');
+    if (!original.startsWith('#EXTM3U')) throw new Error('91短剧返回了无效的播放清单');
+    const id = randomUUID();
+    const port = request.server.address?.()?.port || request.server.server?.address()?.port ||
+        request.raw.socket.localPort;
+    if (!port) throw new Error('无法取得本机播放服务端口');
+    const base = `http://127.0.0.1:${port}/spider/dj91/3/hls/${id}`;
+    const keys = [];
+    const lines = original.split(/\r?\n/).map((line) => {
+        if (line.startsWith('#EXT-X-KEY:')) {
+            return line.replace(/URI="([^"]+)"/g, (match, raw) => {
+                const keyUrl = new URL(raw, manifestUrl);
+                if (keyUrl.origin !== SITE) return match;
+                const index = keys.push(keyUrl.href) - 1;
+                return `URI="${base}/key/${index}"`;
+            });
+        }
+        if (line && !line.startsWith('#')) return new URL(line, manifestUrl).href;
+        return line;
+    });
+    if (!keys.length) return url;
+    const now = Date.now();
+    for (const [entryId, entry] of playlistCache) {
+        if (entry.expiresAt < now) playlistCache.delete(entryId);
+    }
+    if (playlistCache.size >= 100) playlistCache.delete(playlistCache.keys().next().value);
+    playlistCache.set(id, { body: lines.join('\n'), keys, expiresAt: now + PLAYLIST_LIFETIME });
+    return `${base}/playlist.m3u8`;
 }
 
 function detailInfo($, slug, request) {
@@ -127,7 +164,9 @@ async function play(request) {
     if (!raw) return { parse: 0, url: '' };
     const url = /^https?:\/\//i.test(raw) ? raw : new URL(`/h5/m3u8/${raw.replace(/^\/+/, '')}`, SITE).href;
     if (!/^https?:\/\//i.test(url)) return { parse: 0, url: '' };
-    return { parse: 0, url, header: { Referer: `${SITE}/`, 'User-Agent': 'Mozilla/5.0' } };
+    const session = await saved91Session();
+    const playableUrl = session?.cookie ? await authenticatedPlaylist(url, request) : url;
+    return { parse: 0, url: playableUrl, header: { Referer: `${SITE}/`, 'User-Agent': 'Mozilla/5.0' } };
 }
 
 async function search(request) {
@@ -148,6 +187,31 @@ export default {
         fastify.post('/detail', detail);
         fastify.post('/play', play);
         fastify.post('/search', search);
+        fastify.get('/hls/:id/playlist.m3u8', async (request, reply) => {
+            const entry = playlistCache.get(request.params.id);
+            if (!entry || entry.expiresAt < Date.now()) return reply.code(404).send();
+            return reply.header('Cache-Control', 'no-store')
+                .header('Access-Control-Allow-Origin', '*')
+                .type('application/vnd.apple.mpegurl').send(entry.body);
+        });
+        fastify.get('/hls/:id/key/:index', async (request, reply) => {
+            const entry = playlistCache.get(request.params.id);
+            const index = Number(request.params.index);
+            if (!entry || entry.expiresAt < Date.now() || !Number.isInteger(index) || !entry.keys[index]) {
+                return reply.code(404).send();
+            }
+            const session = await saved91Session();
+            if (!session?.cookie) return reply.code(401).send();
+            const response = await axios.get(entry.keys[index], {
+                responseType: 'arraybuffer', timeout: 15000,
+                headers: { Cookie: session.cookie, Referer: `${SITE}/`, 'User-Agent': 'Mozilla/5.0' },
+            });
+            const key = Buffer.from(response.data);
+            if (key.length !== 16) throw new Error('91短剧返回了无效的播放密钥');
+            return reply.header('Cache-Control', 'no-store')
+                .header('Access-Control-Allow-Origin', '*')
+                .type('application/octet-stream').send(key);
+        });
         fastify.get('/image', async (request, reply) => {
             let url;
             try { url = new URL(Buffer.from(String(request.query?.url || ''), 'base64url').toString('utf8')); }

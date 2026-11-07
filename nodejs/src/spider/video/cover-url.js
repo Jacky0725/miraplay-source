@@ -1,5 +1,7 @@
 const PLAIN_HOST = 'imgpublic.ycomesc.live';
-const ENCRYPTED_HOSTS = new Set(['pic.wlwvch.cn', 'pic.wvxrrip.cn']);
+const ENCRYPTED_HOSTS = new Set([
+    'pic.wlwvch.cn', 'pic.wvxrrip.cn', 'pic.gyezbp.cn', 'pic.hdhwqx.cn',
+]);
 
 export function publicCover(value, base) {
     if (!value) return '';
