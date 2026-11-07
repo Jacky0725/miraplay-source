@@ -13,7 +13,7 @@
 - `nodejs/src/spider/video/yeguodj.js` 是野果短剧独立站点。`nodejs/src/settings/yeguodj-credentials.js` 管理本机账号，沿用站点公开的 AES-CBC 接口参数。加密封面使用 `cover-url.js` 指向普通图片域名，不依赖本机图片代理。筛除含未成年人暗示及强迫等标签的条目，正片地址在播放时重新请求。
 - `nodejs/src/spider/video/javday.js` 和 `nodejs/src/spider/video/dj91.js` 是独立站点；配套登录状态在 `nodejs/src/settings/` 对应文件中。两者必须在列表、详情和播放三处应用 `content-filter.js`：普通模式不凭“学生”“校园”“少女”“制服”等泛化词拦截；不要把不同元数据字段或句段中的词拼成一个风险短语。明确的未成年人指向、同一描述中明确的未成年人场景与性行为，以及明确的乱伦和性侵内容仍须筛除。播放时只提取站点提供的 HLS 地址，不运行网页广告脚本。
 - 配置中心的“严格筛选”默认关闭，可手动开启附加泛化词筛选；基础筛选始终生效。本机数据库保存模式，公开脚本不保存个人设置。
-- 91短剧加密封面通过本机 `/image?url=` 路由解码；不得把长编码地址放进路径参数，Fastify 默认路径参数长度会使图片路由返回 404。
+- 91短剧加密封面通过本机 `/image?url=` 路由解码；不得把长编码地址放进路径参数，Fastify 默认路径参数长度会使图片路由返回 404。每集保留原播放项，并提供一个“兼容”播放项；兼容项在本机暂存 HLS 清单，只代理同站密钥请求，站点 Cookie 不发送给视频 CDN。
 - 橙果短剧分类翻页使用 `/page-2` 等路径，不能使用 `?page=2`；搜索页封面在 Nuxt 数据中可能是字符串或带 `url` 的对象。
 - JAVDAY 的剧集页有两种播放结构：短剧页面提供 `.episode-btn[data-url]`，单条视频页面仅在内联播放器配置中提供 `url: '...m3u8'`。两种结构均需读取，且只接受 `javday.homes` 的 HLS 地址。公开内容不依赖登录。
 - 视频规则不调用各站的广告列表 API 或网页广告脚本，不将广告条目加入播放列表。上游若在正片 HLS 中拼接广告，不能仅凭规则可靠跳过。
@@ -38,7 +38,7 @@
 
 - `.github/workflows/pages.yml` 在提交到 `main` 后自动安装依赖、编译，并将四个 `index.*` 文件发布到 GitHub Pages。
 - Pages 的发布来源保持为 **GitHub Actions**；不要切换为 **Deploy from a branch**。
-- MiraPlay 中使用固定地址：`https://jacky0725.github.io/miraplay-source/index.js.md5`。用户清理 MiraPlay 缓存后已确认该地址正常。若重载后仍显示旧内容，先清理应用缓存。工作流还发布 `refresh-20261007/` 备用路径，后续更新须保持两者同步。
+- MiraPlay 中使用固定地址：`https://jacky0725.github.io/miraplay-source/index.js.md5`。用户清理 MiraPlay 缓存后已确认该地址正常。若重载后仍显示旧内容，先清理应用缓存。工作流还发布 `refresh-20261007/` 和 `refresh-20261108/` 备用路径，后续更新须保持这些路径同步。
 - 发布后确认 `index.js.md5` 可访问，并且其内容与公开 `index.js` 的 MD5 一致。
 
 这是公开仓库。不要将 Cookie、访问令牌或其他密钥写进源码、配置或工作流。
