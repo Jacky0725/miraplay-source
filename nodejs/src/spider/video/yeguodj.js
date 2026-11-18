@@ -112,17 +112,7 @@ async function detail(request) {
     }] };
 }
 
-async function play(request, proxyHls) {
-    const match = String(request.body?.id || '').match(/^(direct:)?(\d+)\/(\d+)$/);
-    if (!match) return { parse: 0, url: '' };
-    const [, direct, playletId, episodeId] = match;
-    const detail = await requestYeguodj('/api/playlet/detail', {
-        video_id: playletId, id: playletId, episode_id: 0, related_limit: 0,
-    });
-    if (!allowed(detail) || !Array.isArray(detail.episodes) ||
-        !detail.episodes.some((episode) => String(episode.id) === episodeId)) {
-        return { parse: 0, url: '' };
-    }
+async function playbackUrl(playletId, episodeId) {
     const data = await requestYeguodj('/api/playlet/play', {
         playlet_id: playletId, video_id: playletId, episode_id: episodeId,
     });
@@ -135,14 +125,24 @@ async function play(request, proxyHls) {
         catch { return false; }
     })?.trim();
     if (!url) throw Object.assign(new Error('野果短剧源站未返回播放地址'), { statusCode: 502 });
+    return url;
+}
+
+async function play(request, proxyHls) {
+    const match = String(request.body?.id || '').match(/^(direct:)?(\d+)\/(\d+)$/);
+    if (!match) return { parse: 0, url: '' };
+    const [, direct, playletId, episodeId] = match;
+    const detail = await requestYeguodj('/api/playlet/detail', {
+        video_id: playletId, id: playletId, episode_id: 0, related_limit: 0,
+    });
+    if (!allowed(detail) || !Array.isArray(detail.episodes) ||
+        !detail.episodes.some((episode) => String(episode.id) === episodeId)) {
+        return { parse: 0, url: '' };
+    }
+    const url = await playbackUrl(playletId, episodeId);
     if (!direct && new URL(url).pathname.toLowerCase().endsWith('.m3u8')) {
-        try {
-            const compatible = await proxyHls(url, request, { signal: AbortSignal.timeout(4500) });
-            if (compatible !== url) return { parse: 0, url: compatible };
-        } catch (error) {
-            request.log.warn({ upstreamStatus: error.response?.status, networkCode: error.code },
-                '野果短剧本机播放清单不可用，返回源站下发的播放地址');
-        }
+        const compatible = await proxyHls(url, request, { refreshUrl: () => playbackUrl(playletId, episodeId) });
+        if (compatible !== url) return { parse: 0, url: compatible };
     }
     return { parse: 0, url, header: PLAY_HEADERS };
 }

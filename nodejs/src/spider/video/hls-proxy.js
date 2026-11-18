@@ -17,26 +17,19 @@ async function fetchMedia(url, options) {
     }
 }
 
-async function compatiblePlaylist(url, request, playlists, headers, options) {
-    const { signal, stripWatermarkTag } = options;
-    const port = request.server.address?.()?.port || request.server.server.address()?.port ||
-        request.raw.socket.localPort;
-    if (!port) return url;
-
+async function loadPlaylist(url, base, headers, { stripWatermarkTag }) {
     const response = await fetchMedia(url, {
         headers: { ...headers, Accept: 'application/vnd.apple.mpegurl, */*' },
-        signal, responseType: 'text', timeout: 8000, maxContentLength: 2 * 1024 * 1024,
+        responseType: 'text', timeout: 8000, maxContentLength: 2 * 1024 * 1024,
     });
     const manifest = response.data.trimStart();
     if (!manifest.startsWith('#EXTM3U')) throw new Error('源站返回了无效的播放清单');
-    if (!manifest.includes('#EXTINF:') || manifest.includes('#EXT-X-STREAM-INF:')) return url;
+    if (!manifest.includes('#EXTINF:') || manifest.includes('#EXT-X-STREAM-INF:')) return { redirect: url };
 
     const manifestUrl = response.request?.res?.responseUrl || url;
-    const id = randomUUID();
-    const base = `http://127.0.0.1:${port}${request.server.prefix}/hls/${id}`;
     const keyUrls = new Map();
     const segments = [];
-    const body = manifest.split(/\r?\n/).filter((line) => !stripWatermarkTag || !line.trimStart().startsWith('#EXT-X-WJ-T:')).map((line) => {
+    const lines = manifest.split(/\r?\n/).filter((line) => !stripWatermarkTag || !line.trimStart().startsWith('#EXT-X-WJ-T:')).map((line) => {
         const entry = line.trim();
         if (!entry) return line;
         if (!entry.startsWith('#')) {
@@ -52,22 +45,19 @@ async function compatiblePlaylist(url, request, playlists, headers, options) {
             if (!keyUrls.has(resolved.href)) keyUrls.set(resolved.href, keyUrls.size);
             return `${separator}URI="${base}/key/${keyUrls.get(resolved.href)}"`;
         });
-    }).join('\n');
+    });
+    if (lines.includes('#EXT-X-ENDLIST') && !lines.some((line) => line.startsWith('#EXT-X-PLAYLIST-TYPE:'))) {
+        lines.splice(1, 0, '#EXT-X-PLAYLIST-TYPE:VOD');
+    }
 
     const keys = await Promise.all(Array.from(keyUrls.keys(), async (keyUrl) => {
         const response = await fetchMedia(keyUrl, {
-            headers, signal, responseType: 'arraybuffer', timeout: 8000, maxContentLength: 64 * 1024,
+            headers, responseType: 'arraybuffer', timeout: 8000, maxContentLength: 64 * 1024,
         });
         if (response.data.length !== 16) throw new Error('源站返回了无效的播放密钥');
         return Buffer.from(response.data);
     }));
-    const now = Date.now();
-    for (const [entryId, entry] of playlists) {
-        if (entry.expiresAt <= now) playlists.delete(entryId);
-    }
-    if (playlists.size >= 100) playlists.delete(playlists.keys().next().value);
-    playlists.set(id, { body, keys, segments, expiresAt: now + PLAYLIST_LIFETIME });
-    return `${base}/playlist.m3u8`;
+    return { body: lines.join('\n'), keys, segments };
 }
 
 async function streamSegment(request, reply, url, headers) {
@@ -95,29 +85,69 @@ async function streamSegment(request, reply, url, headers) {
 
 export function registerHlsProxy(fastify, headers) {
     const playlists = new Map();
-    fastify.get('/hls/:id/playlist.m3u8', (request, reply) => {
+    fastify.get('/hls/:id/playlist.m3u8', async (request, reply) => {
         const entry = playlists.get(request.params.id);
         if (!entry || entry.expiresAt <= Date.now()) return reply.code(404).send();
+        if (!entry.media) {
+            try {
+                entry.pending ??= entry.load().finally(() => { entry.pending = null; });
+                entry.media = await entry.pending;
+            } catch (error) {
+                request.log.warn({ upstreamStatus: error.response?.status, networkCode: error.code }, '本机播放清单加载失败');
+                return reply.code(502).send();
+            }
+        }
+        if (entry.media.redirect) return reply.redirect(302, entry.media.redirect);
         return reply.header('Cache-Control', 'no-store')
             .header('Access-Control-Allow-Origin', '*')
-            .type('application/vnd.apple.mpegurl').send(entry.body);
+            .type('application/vnd.apple.mpegurl').send(entry.media.body);
     });
     fastify.get('/hls/:id/key/:index', (request, reply) => {
         const entry = playlists.get(request.params.id);
         const index = Number(request.params.index);
-        if (!entry || entry.expiresAt <= Date.now() || !Number.isInteger(index) || !entry.keys[index]) {
+        const key = Number.isInteger(index) && entry?.media?.keys?.[index];
+        if (!key || entry.expiresAt <= Date.now()) {
             return reply.code(404).send();
         }
         return reply.header('Cache-Control', 'no-store')
             .header('Access-Control-Allow-Origin', '*')
-            .type('application/octet-stream').send(entry.keys[index]);
+            .type('application/octet-stream').send(key);
     });
     fastify.get('/hls/:id/segment/:index.ts', (request, reply) => {
         const entry = playlists.get(request.params.id);
         const index = Number(request.params.index);
-        const url = Number.isInteger(index) && entry?.segments[index];
+        const url = Number.isInteger(index) && entry?.media?.segments?.[index];
         if (!url || entry.expiresAt <= Date.now()) return reply.code(404).send();
         return streamSegment(request, reply, url, headers);
     });
-    return (url, request, options = {}) => compatiblePlaylist(url, request, playlists, headers, options);
+    return async (url, request, options = {}) => {
+        const port = request.server.address?.()?.port || request.server.server.address()?.port ||
+            request.raw.socket.localPort;
+        if (!port) return url;
+
+        const id = randomUUID();
+        const base = `http://127.0.0.1:${port}${request.server.prefix}/hls/${id}`;
+        const entry = { load: () => loadPlaylist(url, base, headers, options) };
+        if (options.refreshUrl) {
+            entry.load = async () => {
+                try { return await loadPlaylist(url, base, headers, options); }
+                catch (error) {
+                    if (error.response?.headers?.['retry-after']) throw error;
+                    const fresh = await options.refreshUrl();
+                    return loadPlaylist(fresh, base, headers, options);
+                }
+            };
+        } else {
+            entry.media = await entry.load();
+            if (entry.media.redirect) return entry.media.redirect;
+        }
+        const now = Date.now();
+        for (const [entryId, cached] of playlists) {
+            if (cached.expiresAt <= now) playlists.delete(entryId);
+        }
+        if (playlists.size >= 100) playlists.delete(playlists.keys().next().value);
+        entry.expiresAt = now + PLAYLIST_LIFETIME;
+        playlists.set(id, entry);
+        return `${base}/playlist.m3u8`;
+    };
 }
