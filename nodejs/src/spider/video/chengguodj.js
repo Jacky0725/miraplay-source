@@ -6,6 +6,7 @@ import { savedSession } from '../../settings/credentials.js';
 const BASE = 'https://chengguodj.com';
 const PLAY_HEADERS = { Referer: `${BASE}/`, 'User-Agent': 'Mozilla/5.0' };
 const PLAYLIST_LIFETIME = 15 * 60 * 1000;
+const EPISODE_ID = /^dj-[a-zA-Z0-9-]+\/\d+$/;
 const CHANNELS = [
     ['recommend', '推荐'],
     ['yuanchuang', '原创'],
@@ -117,7 +118,7 @@ function dramaFromNuxt(data, slug) {
         typeof item.title === 'number' && Array.isArray(data[item.title]) === false);
 }
 
-async function detail(inReq) {
+async function detail(inReq, directPlayback) {
     const raw = Array.isArray(inReq.body?.id) ? inReq.body.id[0] : inReq.body?.id;
     const slug = String(raw || '');
     if (!/^dj-[a-zA-Z0-9-]+$/.test(slug)) return { list: [] };
@@ -136,6 +137,8 @@ async function detail(inReq) {
     episodes.sort((a, b) => Number(a.n) - Number(b.n));
     const name = $('h1').first().text().trim() || (drama ? data[drama.title] : slug);
     const intro = drama && typeof drama.intro === 'number' ? String(data[drama.intro] || '') : '';
+    const episodeList = episodes.map(({ n, id }) => `第${n}集$${id}`).join('#');
+    const hasDirectLine = !directPlayback && episodes.length > 0;
     return {
         list: [{
             vod_id: slug,
@@ -144,30 +147,53 @@ async function detail(inReq) {
             type_name: drama && typeof drama.channel === 'number' ? String(data[drama.channel]?.name || '') : '',
             vod_content: intro || $('meta[name="description"]').attr('content') || '',
             vod_remarks: `共${episodes.length}集`,
-            vod_play_from: '橙果短剧',
-            vod_play_url: episodes.map(({ n, id }) => `第${n}集$${id}`).join('#'),
+            vod_play_from: hasDirectLine ? '橙果短剧$$$原站直连' : '橙果短剧',
+            vod_play_url: hasDirectLine ? `${episodeList}$$$${episodes.map(({ n, id }) => `第${n}集$direct:${id}`).join('#')}` : episodeList,
         }],
     };
 }
 
+async function fetchMedia(url, options) {
+    for (let attempt = 0; ; attempt++) {
+        try {
+            return await axios.get(url, options);
+        } catch (error) {
+            const status = error.response?.status;
+            const temporary = status === 408 || status === 429 || status >= 500 ||
+                ['ECONNABORTED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN'].includes(error.code);
+            if (attempt > 0 || !temporary) throw error;
+            error.response?.data?.destroy?.();
+        }
+    }
+}
+
 async function compatiblePlaylist(url, request, playlists) {
-    const port = request.server.server.address()?.port;
+    const port = request.server.address?.()?.port || request.server.server.address()?.port ||
+        request.raw.socket.localPort;
     if (!port) return url;
 
-    const response = await axios.get(url, {
-        headers: PLAY_HEADERS, responseType: 'text', timeout: 10000, maxContentLength: 2 * 1024 * 1024,
+    const response = await fetchMedia(url, {
+        headers: { ...PLAY_HEADERS, Accept: 'application/vnd.apple.mpegurl, */*' },
+        responseType: 'text', timeout: 8000, maxContentLength: 2 * 1024 * 1024,
     });
     const manifest = response.data.trimStart();
-    if (!manifest.startsWith('#EXTM3U') || !manifest.includes('#EXTINF:')) return url;
+    if (!manifest.startsWith('#EXTM3U')) throw new Error('橙果短剧返回了无效的播放清单');
+    if (!manifest.includes('#EXTINF:') || manifest.includes('#EXT-X-STREAM-INF:')) return url;
 
     const manifestUrl = response.request?.res?.responseUrl || url;
     const id = randomUUID();
     const base = `http://127.0.0.1:${port}${request.server.prefix}/hls/${id}`;
     const keyUrls = new Map();
-    const body = manifest.split(/\r?\n/).map((line) => {
+    const segments = [];
+    const body = manifest.split(/\r?\n/).filter((line) => !line.trimStart().startsWith('#EXT-X-WJ-T:')).map((line) => {
         const entry = line.trim();
         if (!entry) return line;
-        if (!entry.startsWith('#')) return new URL(entry, manifestUrl).href;
+        if (!entry.startsWith('#')) {
+            const segment = new URL(entry, manifestUrl);
+            if (segment.protocol !== 'https:' || !segment.pathname.toLowerCase().endsWith('.ts')) return segment.href;
+            const index = segments.push(segment.href) - 1;
+            return `${base}/segment/${index}.ts`;
+        }
         return entry.replace(/([:,])URI="([^"]+)"/g, (_match, separator, raw) => {
             const resolved = new URL(raw, manifestUrl);
             if (!entry.startsWith('#EXT-X-KEY:') || !/(?:[:,])METHOD=AES-128(?:,|$)/.test(entry) ||
@@ -178,7 +204,7 @@ async function compatiblePlaylist(url, request, playlists) {
     }).join('\n');
 
     const keys = await Promise.all(Array.from(keyUrls.keys(), async (keyUrl) => {
-        const response = await axios.get(keyUrl, {
+        const response = await fetchMedia(keyUrl, {
             headers: PLAY_HEADERS, responseType: 'arraybuffer', timeout: 8000, maxContentLength: 16,
         });
         if (response.data.length !== 16) throw new Error('橙果短剧返回了无效的播放密钥');
@@ -189,13 +215,15 @@ async function compatiblePlaylist(url, request, playlists) {
         if (entry.expiresAt <= now) playlists.delete(entryId);
     }
     if (playlists.size >= 100) playlists.delete(playlists.keys().next().value);
-    playlists.set(id, { body, keys, expiresAt: now + PLAYLIST_LIFETIME });
+    playlists.set(id, { body, keys, segments, expiresAt: now + PLAYLIST_LIFETIME });
     return `${base}/playlist.m3u8`;
 }
 
 async function play(inReq, playlists) {
-    const id = String(inReq.body?.id || '');
-    if (!/^dj-[a-zA-Z0-9-]+\/\d+$/.test(id)) return { parse: 0, url: '' };
+    const raw = String(inReq.body?.id || '');
+    const direct = raw.startsWith('direct:');
+    const id = direct ? raw.slice('direct:'.length) : raw;
+    if (!EPISODE_ID.test(id)) return { parse: 0, url: '' };
     const $ = await fetchPage(`/play/${id}`);
     const data = nuxtData($);
     const media = data.find((item) => item && typeof item === 'object' &&
@@ -203,14 +231,38 @@ async function play(inReq, playlists) {
     const url = media && typeof media.source_url === 'number' ? data[media.source_url] : '';
     if (!url || !/^https?:\/\//.test(url)) return { parse: 0, url: '' };
     let playableUrl = url;
-    if (playlists) {
+    if (playlists && !direct && new URL(url).pathname.toLowerCase().endsWith('.m3u8')) {
         try {
             playableUrl = await compatiblePlaylist(url, inReq, playlists);
-        } catch {
-            inReq.log.warn('橙果短剧兼容清单加载失败，使用原站播放地址');
+        } catch (error) {
+            inReq.log.warn({ upstreamStatus: error.response?.status, networkCode: error.code },
+                '橙果短剧兼容清单加载失败，使用原站播放地址');
         }
     }
-    return { parse: 0, url: playableUrl, header: PLAY_HEADERS };
+    return playableUrl === url ? { parse: 0, url, header: PLAY_HEADERS } : { parse: 0, url: playableUrl };
+}
+
+async function streamSegment(request, reply, url) {
+    const range = request.headers.range;
+    let response;
+    try {
+        response = await fetchMedia(url, {
+            headers: { ...PLAY_HEADERS, 'Accept-Encoding': 'identity', ...(range ? { Range: range } : {}) },
+            responseType: 'stream', timeout: 10000,
+            validateStatus: (status) => status === 200 || status === 206 || status === 416,
+        });
+    } catch (error) {
+        error.response?.data?.destroy?.();
+        request.log.warn({ upstreamStatus: error.response?.status, networkCode: error.code }, '橙果短剧分片请求失败');
+        return reply.code(502).send();
+    }
+    reply.code(response.status).header('Cache-Control', 'no-store')
+        .header('Access-Control-Allow-Origin', '*')
+        .header('Access-Control-Expose-Headers', 'Accept-Ranges, Content-Length, Content-Range');
+    for (const header of ['accept-ranges', 'content-length', 'content-range']) {
+        if (response.headers[header] !== undefined) reply.header(header, response.headers[header]);
+    }
+    return reply.type('video/mp2t').send(response.data);
 }
 
 async function search(inReq) {
@@ -228,7 +280,7 @@ export default {
         fastify.post('/init', init);
         fastify.post('/home', home);
         fastify.post('/category', category);
-        fastify.post('/detail', detail);
+        fastify.post('/detail', (request) => detail(request, options.directPlayback));
         fastify.post('/play', (request) => play(request, playlists));
         fastify.post('/search', search);
         if (!playlists) return;
@@ -249,6 +301,13 @@ export default {
             return reply.header('Cache-Control', 'no-store')
                 .header('Access-Control-Allow-Origin', '*')
                 .type('application/octet-stream').send(entry.keys[index]);
+        });
+        fastify.get('/hls/:id/segment/:index.ts', (request, reply) => {
+            const entry = playlists.get(request.params.id);
+            const index = Number(request.params.index);
+            const url = Number.isInteger(index) && entry?.segments[index];
+            if (!url || entry.expiresAt <= Date.now()) return reply.code(404).send();
+            return streamSegment(request, reply, url);
         });
     },
 };
