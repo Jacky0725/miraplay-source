@@ -1,8 +1,11 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import { randomUUID } from 'crypto';
 import { savedSession } from '../../settings/credentials.js';
 
 const BASE = 'https://chengguodj.com';
+const PLAY_HEADERS = { Referer: `${BASE}/`, 'User-Agent': 'Mozilla/5.0' };
+const PLAYLIST_LIFETIME = 15 * 60 * 1000;
 const CHANNELS = [
     ['recommend', '推荐'],
     ['yuanchuang', '原创'],
@@ -147,7 +150,50 @@ async function detail(inReq) {
     };
 }
 
-async function play(inReq) {
+async function compatiblePlaylist(url, request, playlists) {
+    const port = request.server.server.address()?.port;
+    if (!port) return url;
+
+    const response = await axios.get(url, {
+        headers: PLAY_HEADERS, responseType: 'text', timeout: 10000, maxContentLength: 2 * 1024 * 1024,
+    });
+    const manifest = response.data.trimStart();
+    if (!manifest.startsWith('#EXTM3U') || !manifest.includes('#EXTINF:')) return url;
+
+    const manifestUrl = response.request?.res?.responseUrl || url;
+    const id = randomUUID();
+    const base = `http://127.0.0.1:${port}${request.server.prefix}/hls/${id}`;
+    const keyUrls = new Map();
+    const body = manifest.split(/\r?\n/).map((line) => {
+        const entry = line.trim();
+        if (!entry) return line;
+        if (!entry.startsWith('#')) return new URL(entry, manifestUrl).href;
+        return entry.replace(/([:,])URI="([^"]+)"/g, (_match, separator, raw) => {
+            const resolved = new URL(raw, manifestUrl);
+            if (!entry.startsWith('#EXT-X-KEY:') || !/(?:[:,])METHOD=AES-128(?:,|$)/.test(entry) ||
+                resolved.protocol !== 'https:') return `${separator}URI="${resolved.href}"`;
+            if (!keyUrls.has(resolved.href)) keyUrls.set(resolved.href, keyUrls.size);
+            return `${separator}URI="${base}/key/${keyUrls.get(resolved.href)}"`;
+        });
+    }).join('\n');
+
+    const keys = await Promise.all(Array.from(keyUrls.keys(), async (keyUrl) => {
+        const response = await axios.get(keyUrl, {
+            headers: PLAY_HEADERS, responseType: 'arraybuffer', timeout: 8000, maxContentLength: 16,
+        });
+        if (response.data.length !== 16) throw new Error('橙果短剧返回了无效的播放密钥');
+        return Buffer.from(response.data);
+    }));
+    const now = Date.now();
+    for (const [entryId, entry] of playlists) {
+        if (entry.expiresAt <= now) playlists.delete(entryId);
+    }
+    if (playlists.size >= 100) playlists.delete(playlists.keys().next().value);
+    playlists.set(id, { body, keys, expiresAt: now + PLAYLIST_LIFETIME });
+    return `${base}/playlist.m3u8`;
+}
+
+async function play(inReq, playlists) {
     const id = String(inReq.body?.id || '');
     if (!/^dj-[a-zA-Z0-9-]+\/\d+$/.test(id)) return { parse: 0, url: '' };
     const $ = await fetchPage(`/play/${id}`);
@@ -156,11 +202,15 @@ async function play(inReq) {
         Object.prototype.hasOwnProperty.call(item, 'source_url'));
     const url = media && typeof media.source_url === 'number' ? data[media.source_url] : '';
     if (!url || !/^https?:\/\//.test(url)) return { parse: 0, url: '' };
-    return {
-        parse: 0,
-        url,
-        header: { Referer: BASE + '/', 'User-Agent': 'Mozilla/5.0' },
-    };
+    let playableUrl = url;
+    if (playlists) {
+        try {
+            playableUrl = await compatiblePlaylist(url, inReq, playlists);
+        } catch {
+            inReq.log.warn('橙果短剧兼容清单加载失败，使用原站播放地址');
+        }
+    }
+    return { parse: 0, url: playableUrl, header: PLAY_HEADERS };
 }
 
 async function search(inReq) {
@@ -173,12 +223,32 @@ async function search(inReq) {
 
 export default {
     meta: { key: 'chengguodj', name: '橙果短剧', type: 3, searchable: 1, quickSearch: 1 },
-    api: async (fastify) => {
+    api: async (fastify, options) => {
+        const playlists = options.directPlayback ? null : new Map();
         fastify.post('/init', init);
         fastify.post('/home', home);
         fastify.post('/category', category);
         fastify.post('/detail', detail);
-        fastify.post('/play', play);
+        fastify.post('/play', (request) => play(request, playlists));
         fastify.post('/search', search);
+        if (!playlists) return;
+
+        fastify.get('/hls/:id/playlist.m3u8', (request, reply) => {
+            const entry = playlists.get(request.params.id);
+            if (!entry || entry.expiresAt <= Date.now()) return reply.code(404).send();
+            return reply.header('Cache-Control', 'no-store')
+                .header('Access-Control-Allow-Origin', '*')
+                .type('application/vnd.apple.mpegurl').send(entry.body);
+        });
+        fastify.get('/hls/:id/key/:index', (request, reply) => {
+            const entry = playlists.get(request.params.id);
+            const index = Number(request.params.index);
+            if (!entry || entry.expiresAt <= Date.now() || !Number.isInteger(index) || !entry.keys[index]) {
+                return reply.code(404).send();
+            }
+            return reply.header('Cache-Control', 'no-store')
+                .header('Access-Control-Allow-Origin', '*')
+                .type('application/octet-stream').send(entry.keys[index]);
+        });
     },
 };

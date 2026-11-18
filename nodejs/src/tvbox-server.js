@@ -4,7 +4,7 @@ import chengguodj from './spider/video/chengguodj.js';
 const app = Fastify({ logger: true });
 const port = Number(process.env.PORT || 9988);
 
-app.register(chengguodj.api, { prefix: '/internal/chengguodj' });
+app.register(chengguodj.api, { prefix: '/internal/chengguodj', directPlayback: true });
 
 async function spiderCall(action, body = {}) {
     const response = await app.inject({
