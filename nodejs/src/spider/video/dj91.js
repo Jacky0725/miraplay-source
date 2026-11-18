@@ -1,8 +1,8 @@
 import * as cheerio from 'cheerio';
-import { createHash } from 'crypto';
 import { request91, saved91Session } from '../../settings/dj91-credentials.js';
 import { allowedAdultMetadata, cleanEpisodeTitle } from './content-filter.js';
-import { fetchMedia, registerHlsProxy, retryMedia } from './hls-proxy.js';
+import { registerHlsProxy, retryMedia } from './hls-proxy.js';
+import { proxyCoverUrl, registerCoverProxy } from './cover-proxy.js';
 
 const SITE = 'https://91dj66.com';
 const CHANNELS = [
@@ -13,17 +13,7 @@ const CHANNELS = [
 ];
 const IMAGE_HOST = 'd3n8qx4rvy4vol.cloudfront.net';
 const IMAGE_KEY = Buffer.from('2019ysapp7527');
-const imageCache = new Map();
-const IMAGE_CACHE_LIMIT = 24 * 1024 * 1024;
-let imageCacheBytes = 0;
 const PLAY_HEADERS = { Referer: SITE + '/', 'User-Agent': 'Mozilla/5.0' };
-
-function coverType(buffer) {
-    if (buffer.subarray(0, 3).toString('hex') === 'ffd8ff') return 'image/jpeg';
-    if (buffer.subarray(0, 8).toString('hex') === '89504e470d0a1a0a') return 'image/png';
-    if (buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
-    return '';
-}
 
 async function page(path) {
     return cheerio.load((await request91(path)).data);
@@ -33,12 +23,7 @@ function image(value, request) {
     try {
         const url = new URL(value, SITE);
         if (!['https:', 'http:'].includes(url.protocol)) return '';
-        if (url.hostname !== IMAGE_HOST) return url.href;
-        const encoded = Buffer.from(url.href).toString('base64url');
-        const port = request.server.address?.()?.port || request.server.server?.address()?.port ||
-            request.raw.socket.localPort;
-        if (!port) return '';
-        return `http://127.0.0.1:${port}/spider/dj91/3/image?url=${encoded}`;
+        return proxyCoverUrl(url, request, IMAGE_HOST);
     } catch { return ''; }
 }
 
@@ -74,14 +59,20 @@ function detailInfo($, slug, request) {
     const id = String($('[data-playlet-id]').first().attr('data-playlet-id') || '');
     if (!/^\d+$/.test(id)) return null;
     const episodes = [];
-    $(`a[href^="/play/${slug}/"]`).each((_index, node) => {
-        const chapterId = ($(node).attr('href') || '').match(/\/(\d+)\/?$/)?.[1];
-        const episodeTitle = $(node).text().trim();
-        if (chapterId && !episodes.some((entry) => entry.id === chapterId) &&
-            allowedAdultMetadata(episodeTitle || `第${episodes.length + 1}集`)) {
-            episodes.push({ id: chapterId, title: cleanEpisodeTitle(episodeTitle, `第${episodes.length + 1}集`) });
+    $(`a[href^="/play/${slug}/"], .detail-episode-list .detail-episode[data-chapter-id]`).each((_index, node) => {
+        const episode = $(node);
+        const hrefId = (episode.attr('href') || '').match(/\/(\d+)\/?$/)?.[1];
+        const chapterId = episode.attr('data-chapter-id') || hrefId;
+        const order = Number(episode.attr('data-ep')) || episodes.length + 1;
+        const episodeTitle = episode.text().trim();
+        if (/^\d+$/.test(chapterId || '') && !episodes.some((entry) => entry.id === chapterId) &&
+            allowedAdultMetadata(episodeTitle || `第${order}集`)) {
+            const title = cleanEpisodeTitle(episodeTitle, `第${order}集`);
+            const vip = episode.attr('data-vip-dialog-open') !== undefined;
+            episodes.push({ id: chapterId, order, vip, title: vip ? `${title}（VIP）` : title });
         }
     });
+    episodes.sort((a, b) => a.order - b.order);
     return { id, title, description, episodes,
         cover: image($('meta[property="og:image"]').attr('content'), request) };
 }
@@ -127,7 +118,8 @@ async function play(request, proxyHls) {
     const match = rawId.replace(/^(?:proxy:|direct:)/, '').match(/^([a-zA-Z0-9-]+)\/(\d+)$/);
     if (!match) return { parse: 0, url: '' };
     const info = detailInfo(await page(`/detail/${match[1]}`), match[1], request);
-    if (!info || !info.episodes.some((entry) => entry.id === match[2])) return { parse: 0, url: '' };
+    const episode = info?.episodes.find((entry) => entry.id === match[2]);
+    if (!episode) return { parse: 0, url: '' };
     const referer = new URL('/play/' + match[1] + '/' + match[2], SITE).href;
     let cookie = (await saved91Session())?.cookie;
     if (!cookie && !direct) {
@@ -141,6 +133,12 @@ async function play(request, proxyHls) {
         ...session, accept: 'application/json',
     });
     const packet = response.data;
+    if (Number(packet?.code) === 200 && packet?.data?.canWatch === false) {
+        const tip = episode.vip
+            ? '该集需91短剧VIP，请在配置中心登录有观看权限的账号'
+            : '当前91短剧账号暂无该集观看权限，请在配置中心检查登录';
+        throw Object.assign(new Error(tip), { statusCode: 403 });
+    }
     if (Number(packet?.code) !== 200 || !packet?.data?.canWatch) {
         throw new Error(String(packet?.tip || packet?.msg || '该选集暂时无法播放'));
     }
@@ -210,46 +208,10 @@ export default {
         const proxyHls = registerHlsProxy(fastify, PLAY_HEADERS);
         fastify.post('/play', (request) => play(request, proxyHls));
         fastify.post('/search', search);
-        fastify.get('/image', async (request, reply) => {
-            let url;
-            try { url = new URL(Buffer.from(String(request.query?.url || ''), 'base64url').toString('utf8')); }
-            catch { return reply.code(400).send(); }
-            if (url.protocol !== 'https:' || url.hostname !== IMAGE_HOST) return reply.code(400).send();
-            let image = imageCache.get(url.href);
-            if (!image) {
-                let response;
-                try {
-                    response = await fetchMedia(url.href, {
-                        responseType: 'arraybuffer', timeout: 8000, maxContentLength: 4 * 1024 * 1024,
-                    });
-                } catch {
-                    return reply.code(502).send();
-                }
-                const buffer = Buffer.from(response.data);
-                for (let index = 0; index < Math.min(100, buffer.length); index++) {
-                    buffer[index] ^= IMAGE_KEY[index % IMAGE_KEY.length];
-                }
-                const type = coverType(buffer);
-                if (!type) return reply.code(502).send();
-                const etag = '"' + createHash('sha256').update(buffer).digest('hex') + '"';
-                image = { buffer, type, etag };
-                const existing = imageCache.get(url.href);
-                if (existing) {
-                    imageCacheBytes -= existing.buffer.length;
-                    imageCache.delete(url.href);
-                }
-                while (imageCache.size && imageCacheBytes + buffer.length > IMAGE_CACHE_LIMIT) {
-                    const oldest = imageCache.keys().next().value;
-                    imageCacheBytes -= imageCache.get(oldest).buffer.length;
-                    imageCache.delete(oldest);
-                }
-                imageCache.set(url.href, image);
-                imageCacheBytes += buffer.length;
+        registerCoverProxy(fastify, { host: IMAGE_HOST, decode: (buffer) => {
+            for (let index = 0; index < Math.min(100, buffer.length); index++) {
+                buffer[index] ^= IMAGE_KEY[index % IMAGE_KEY.length];
             }
-            reply.header('Cache-Control', 'public, max-age=86400')
-                .header('Access-Control-Allow-Origin', '*').header('ETag', image.etag);
-            if (request.headers['if-none-match'] === image.etag) return reply.code(304).send();
-            return reply.type(image.type).send(image.buffer);
-        });
+        } });
     },
 };

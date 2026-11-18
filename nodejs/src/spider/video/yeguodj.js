@@ -1,5 +1,6 @@
 import { requestYeguodj } from '../../settings/yeguodj-credentials.js';
-import { publicCover } from './cover-url.js';
+import { PLAIN_HOST, publicCover } from './cover-url.js';
+import { proxyCoverUrl, registerCoverProxy } from './cover-proxy.js';
 import { registerHlsProxy } from './hls-proxy.js';
 
 const SITE = 'https://yeguodj.com';
@@ -21,27 +22,31 @@ function allowed(item) {
     return !!item && !EXCLUDED.test(text);
 }
 
-function image(value) { return publicCover(value, SITE); }
+function image(value, request) {
+    return proxyCoverUrl(publicCover(value, SITE), request, PLAIN_HOST);
+}
 
-function card(item) {
+function card(item, request) {
     if (!allowed(item)) return null;
     const id = String(item?.video_id || item?.id || '');
     if (!/^\d+$/.test(id)) return null;
     return {
         vod_id: id, vod_name: String(item.title || ''),
-        vod_pic: image(item.cover),
+        vod_pic: image(item.cover, request),
         vod_remarks: String(item.play_count_text || item.serialize_status_text || ''),
     };
 }
 
-function cards(items) { return (Array.isArray(items) ? items : []).map(card).filter(Boolean); }
+function cards(items, request) {
+    return (Array.isArray(items) ? items : []).map((item) => card(item, request)).filter(Boolean);
+}
 function pagecount(data, page, limit) {
     return Math.max(page, Math.ceil((Number(data?.total) || 0) / (Number(data?.limit) || limit)));
 }
 
 async function init() { return {}; }
 
-async function home() {
+async function home(request) {
     const data = await requestYeguodj('/api/home/homePage');
     const featured = [...(data.top_list || []), ...(data.modules?.list || [])
         .filter((module) => MODULES.some(([id]) => id === `module:${module.id}`))
@@ -51,7 +56,7 @@ async function home() {
         class: [{ type_id: 'recommend', type_name: '推荐' },
             ...MODULES.map(([type_id, type_name]) => ({ type_id, type_name })),
             { type_id: 'explore', type_name: '分类' }],
-        list: cards(featured).filter((item) => {
+        list: cards(featured, request).filter((item) => {
             if (seen.has(item.vod_id)) return false;
             seen.add(item.vod_id);
             return true;
@@ -64,18 +69,18 @@ async function category(request) {
     const page = Math.max(1, Number(request.body?.page) || 1);
     if (id === 'recommend') {
         const data = await requestYeguodj('/api/home/homePage');
-        return { page, pagecount: 1, list: page === 1 ? cards(data.top_list) : [] };
+        return { page, pagecount: 1, list: page === 1 ? cards(data.top_list, request) : [] };
     }
     if (id === 'explore') {
         const data = await requestYeguodj('/api/theater/exploreList', { page, limit: 20 });
-        return { page, pagecount: pagecount(data, page, 20), list: cards(data.list) };
+        return { page, pagecount: pagecount(data, page, 20), list: cards(data.list, request) };
     }
     const moduleId = id.match(/^module:(\d+)$/)?.[1];
     if (!moduleId || !MODULES.some(([key]) => key === id)) return { page, pagecount: 1, list: [] };
     const data = await requestYeguodj('/api/home/recommendDetail', {
         module_id: moduleId, page, pageSize: 20,
     });
-    return { page, pagecount: pagecount(data, page, 20), list: cards(data.list) };
+    return { page, pagecount: pagecount(data, page, 20), list: cards(data.list, request) };
 }
 
 async function detail(request) {
@@ -90,7 +95,7 @@ async function detail(request) {
         .filter((episode) => /^\d+$/.test(String(episode?.id || '')))
         .sort((a, b) => Number(a.sort) - Number(b.sort));
     return { list: [{
-        vod_id: id, vod_name: String(data.title || ''), vod_pic: image(data.cover),
+        vod_id: id, vod_name: String(data.title || ''), vod_pic: image(data.cover, request),
         vod_content: `共${episodes.length}集`, vod_remarks: `共${episodes.length}集`,
         vod_play_from: '野果短剧$$$原站直连',
         vod_play_url: ['', 'direct:'].map((prefix) => episodes.map((episode) => {
@@ -129,7 +134,7 @@ async function search(request) {
     const data = await requestYeguodj('/api/search/result', {
         keyword, tab: 'video', page, limit: 20,
     });
-    return { page, pagecount: pagecount(data, page, 20), list: cards(data.list) };
+    return { page, pagecount: pagecount(data, page, 20), list: cards(data.list, request) };
 }
 
 export default {
@@ -142,5 +147,6 @@ export default {
         const proxyHls = registerHlsProxy(fastify, PLAY_HEADERS);
         fastify.post('/play', (request) => play(request, proxyHls));
         fastify.post('/search', search);
+        registerCoverProxy(fastify, { host: PLAIN_HOST, headers: PLAY_HEADERS });
     },
 };
