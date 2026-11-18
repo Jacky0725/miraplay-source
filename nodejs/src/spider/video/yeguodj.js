@@ -1,5 +1,9 @@
 import { requestYeguodj } from '../../settings/yeguodj-credentials.js';
 import { publicCover } from './cover-url.js';
+import { registerHlsProxy } from './hls-proxy.js';
+
+const SITE = 'https://yeguodj.com';
+const PLAY_HEADERS = { Referer: SITE + '/', 'User-Agent': 'Mozilla/5.0' };
 
 const MODULES = [
     ['module:3', '野果原创短剧'],
@@ -17,7 +21,7 @@ function allowed(item) {
     return !!item && !EXCLUDED.test(text);
 }
 
-function image(value) { return publicCover(value, 'https://yeguodj.com'); }
+function image(value) { return publicCover(value, SITE); }
 
 function card(item) {
     if (!allowed(item)) return null;
@@ -88,29 +92,34 @@ async function detail(request) {
     return { list: [{
         vod_id: id, vod_name: String(data.title || ''), vod_pic: image(data.cover),
         vod_content: `共${episodes.length}集`, vod_remarks: `共${episodes.length}集`,
-        vod_play_from: '野果短剧',
-        vod_play_url: episodes.map((episode) => {
+        vod_play_from: '野果短剧$$$原站直连',
+        vod_play_url: ['', 'direct:'].map((prefix) => episodes.map((episode) => {
             const title = String(episode.title || `第${episode.sort}集`).replace(/[$#]/g, ' ');
-            return `${title}$${id}/${episode.id}`;
-        }).join('#'),
+            return `${title}$${prefix}${id}/${episode.id}`;
+        }).join('#')).join('$$$'),
     }] };
 }
 
-async function play(request) {
-    const match = String(request.body?.id || '').match(/^(\d+)\/(\d+)$/);
+async function play(request, proxyHls) {
+    const match = String(request.body?.id || '').match(/^(direct:)?(\d+)\/(\d+)$/);
     if (!match) return { parse: 0, url: '' };
+    const [, direct, playletId, episodeId] = match;
     const detail = await requestYeguodj('/api/playlet/detail', {
-        video_id: match[1], id: match[1], episode_id: 0, related_limit: 0,
+        video_id: playletId, id: playletId, episode_id: 0, related_limit: 0,
     });
-    if (!allowed(detail) || !(detail.episodes || []).some((episode) => String(episode.id) === match[2])) {
+    if (!allowed(detail) || !(detail.episodes || []).some((episode) => String(episode.id) === episodeId)) {
         return { parse: 0, url: '' };
     }
     const data = await requestYeguodj('/api/playlet/play', {
-        playlet_id: match[1], video_id: match[1], episode_id: match[2],
+        playlet_id: playletId, video_id: playletId, episode_id: episodeId,
     });
-    const url = String(data.video_url || '');
+    const url = String(data.video_url || '').trim();
     if (!/^https?:\/\//i.test(url)) return { parse: 0, url: '' };
-    return { parse: 0, url, header: { Referer: 'https://yeguodj.com/', 'User-Agent': 'Mozilla/5.0' } };
+    if (!direct && new URL(url).pathname.toLowerCase().endsWith('.m3u8')) {
+        const compatible = await proxyHls(url, request);
+        if (compatible !== url) return { parse: 0, url: compatible };
+    }
+    return { parse: 0, url, header: PLAY_HEADERS };
 }
 
 async function search(request) {
@@ -130,7 +139,8 @@ export default {
         fastify.post('/home', home);
         fastify.post('/category', category);
         fastify.post('/detail', detail);
-        fastify.post('/play', play);
+        const proxyHls = registerHlsProxy(fastify, PLAY_HEADERS);
+        fastify.post('/play', (request) => play(request, proxyHls));
         fastify.post('/search', search);
     },
 };

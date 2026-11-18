@@ -1,8 +1,8 @@
-import axios from 'axios';
 import * as cheerio from 'cheerio';
-import { randomUUID } from 'crypto';
+import { createHash } from 'crypto';
 import { request91, saved91Session } from '../../settings/dj91-credentials.js';
 import { allowedAdultMetadata, cleanEpisodeTitle } from './content-filter.js';
+import { fetchMedia, registerHlsProxy, retryMedia } from './hls-proxy.js';
 
 const SITE = 'https://91dj66.com';
 const CHANNELS = [
@@ -14,8 +14,16 @@ const CHANNELS = [
 const IMAGE_HOST = 'd3n8qx4rvy4vol.cloudfront.net';
 const IMAGE_KEY = Buffer.from('2019ysapp7527');
 const imageCache = new Map();
-const playlistCache = new Map();
-const PLAYLIST_LIFETIME = 15 * 60 * 1000;
+const IMAGE_CACHE_LIMIT = 24 * 1024 * 1024;
+let imageCacheBytes = 0;
+const PLAY_HEADERS = { Referer: SITE + '/', 'User-Agent': 'Mozilla/5.0' };
+
+function coverType(buffer) {
+    if (buffer.subarray(0, 3).toString('hex') === 'ffd8ff') return 'image/jpeg';
+    if (buffer.subarray(0, 8).toString('hex') === '89504e470d0a1a0a') return 'image/png';
+    if (buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+    return '';
+}
 
 async function page(path) {
     return cheerio.load((await request91(path)).data);
@@ -56,40 +64,6 @@ function cards($, request) {
 
 function pagecount($, current) {
     return Math.max(current, Number($('[data-catalog-pagination]').attr('data-total')) || current);
-}
-
-async function compatiblePlaylist(url, request) {
-    const manifestUrl = new URL(url);
-    if (manifestUrl.origin !== SITE) throw new Error('91短剧播放地址不属于站点域名');
-    const response = await request91(url, { accept: 'application/vnd.apple.mpegurl' });
-    const original = String(response.data || '');
-    if (!original.startsWith('#EXTM3U')) throw new Error('91短剧返回了无效的播放清单');
-    const port = request.server.address?.()?.port || request.server.server?.address()?.port ||
-        request.raw.socket.localPort;
-    if (!port) throw new Error('无法取得本机播放服务端口');
-    const id = randomUUID();
-    const base = `http://127.0.0.1:${port}/spider/dj91/3/hls/${id}`;
-    const keys = [];
-    const lines = original.split(/\r?\n/).map((line) => {
-        if (line.startsWith('#EXT-X-KEY:')) {
-            return line.replace(/URI="([^"]+)"/g, (match, raw) => {
-                const keyUrl = new URL(raw, manifestUrl);
-                if (keyUrl.origin !== SITE) return match;
-                const index = keys.push(keyUrl.href) - 1;
-                return `URI="${base}/key/${index}"`;
-            });
-        }
-        if (line && !line.startsWith('#')) return new URL(line, manifestUrl).href;
-        return line;
-    });
-    if (!keys.length) return url;
-    const now = Date.now();
-    for (const [entryId, entry] of playlistCache) {
-        if (entry.expiresAt < now) playlistCache.delete(entryId);
-    }
-    if (playlistCache.size >= 100) playlistCache.delete(playlistCache.keys().next().value);
-    playlistCache.set(id, { body: lines.join('\n'), keys, expiresAt: now + PLAYLIST_LIFETIME });
-    return `${base}/playlist.m3u8`;
 }
 
 function detailInfo($, slug, request) {
@@ -141,23 +115,30 @@ async function detail(request) {
     return { list: [{
         vod_id: slug, vod_name: info.title, vod_pic: info.cover,
         vod_content: info.description, vod_remarks: `共${info.episodes.length}集`,
-        vod_play_from: '91短剧',
-        vod_play_url: info.episodes.flatMap((entry) => [
-            `${entry.title}$${slug}/${entry.id}`,
-            `${entry.title}（兼容）$proxy:${slug}/${entry.id}`,
-        ]).join('#'),
+        vod_play_from: '91短剧$$$原站直连',
+        vod_play_url: ['', 'direct:'].map((prefix) => info.episodes.map(({ title, id }) =>
+            `${title}$${prefix}${slug}/${id}`).join('#')).join('$$$'),
     }] };
 }
 
-async function play(request) {
+async function play(request, proxyHls) {
     const rawId = String(request.body?.id || '');
-    const compatible = rawId.startsWith('proxy:');
-    const match = (compatible ? rawId.slice(6) : rawId).match(/^([a-zA-Z0-9-]+)\/(\d+)$/);
+    const direct = rawId.startsWith('direct:');
+    const match = rawId.replace(/^(?:proxy:|direct:)/, '').match(/^([a-zA-Z0-9-]+)\/(\d+)$/);
     if (!match) return { parse: 0, url: '' };
     const info = detailInfo(await page(`/detail/${match[1]}`), match[1], request);
     if (!info || !info.episodes.some((entry) => entry.id === match[2])) return { parse: 0, url: '' };
-    const response = await request91(`/api/playlet/chapter/detail?chapterId=${match[2]}&playletId=${info.id}`, {
-        accept: 'application/json',
+    const referer = new URL('/play/' + match[1] + '/' + match[2], SITE).href;
+    let cookie = (await saved91Session())?.cookie;
+    if (!cookie && !direct) {
+        const guest = await request91(referer, { cookie: '' });
+        cookie = (guest.headers['set-cookie'] || []).map((value) => value.split(';')[0])
+            .filter((value) => /^(?:token|guest_dev_id)=/.test(value)).join('; ');
+    }
+
+    const session = { cookie, referer };
+    const response = await request91('/api/playlet/chapter/detail?chapterId=' + match[2] + '&playletId=' + info.id, {
+        ...session, accept: 'application/json',
     });
     const packet = response.data;
     if (Number(packet?.code) !== 200 || !packet?.data?.canWatch) {
@@ -165,13 +146,49 @@ async function play(request) {
     }
     if (String(packet.data.playletId) !== info.id || String(packet.data.id) !== match[2] ||
         !allowedAdultMetadata(packet.data.title || info.title)) return { parse: 0, url: '' };
-    const raw = String(packet.data.videoUrl || '').trim();
+    const raw = String(packet.data.videoUrl || '').trim().replace(/^\/+/, '');
     if (!raw) return { parse: 0, url: '' };
-    const url = /^https?:\/\//i.test(raw) ? raw : new URL(`/h5/m3u8/${raw.replace(/^\/+/, '')}`, SITE).href;
-    if (!/^https?:\/\//i.test(url)) return { parse: 0, url: '' };
-    if (compatible && !(await saved91Session())?.cookie) throw new Error('请先在配置中心登录91短剧');
-    const playableUrl = compatible ? await compatiblePlaylist(url, request) : url;
-    return { parse: 0, url: playableUrl, header: { Referer: `${SITE}/`, 'User-Agent': 'Mozilla/5.0' } };
+    const path = raw.startsWith('h5/m3u8/') ? '/' + raw : '/h5/m3u8/' + raw;
+    const manifest = new URL(/^https?:\/\//i.test(raw) ? raw : path, SITE);
+    if (direct || manifest.origin !== SITE) return { parse: 0, url: manifest.href, header: PLAY_HEADERS };
+
+    const backedOffKeys = new Map();
+    for (let attempt = 0; attempt < 3; attempt++) {
+        let failedKey;
+        try {
+            const url = await proxyHls(manifest.href, request, {
+                keyOrigin: SITE,
+                fetchManifest: (path) => retryMedia(() => request91(path, {
+                    ...session, accept: 'application/vnd.apple.mpegurl', responseType: 'text',
+                    timeout: 8000, maxContentLength: 2 * 1024 * 1024,
+                })),
+                fetchKey: async (path) => {
+                    try {
+                        if (backedOffKeys.has(path)) throw backedOffKeys.get(path);
+                        return await request91(path, {
+                            ...session, accept: 'application/octet-stream, */*', responseType: 'arraybuffer',
+                            timeout: 8000, maxContentLength: 64 * 1024,
+                        });
+                    } catch (error) {
+                        failedKey = error.response?.status;
+                        if (error.response?.headers?.['retry-after']) backedOffKeys.set(path, error);
+                        throw error;
+                    }
+                },
+            });
+            return url === manifest.href ? { parse: 0, url, header: PLAY_HEADERS } : { parse: 0, url };
+        } catch (error) {
+            // The website can issue a different key ticket when it serves the playlist again.
+            if ([502, 503, 504].includes(failedKey) && attempt < 2) continue;
+            const upstreamStatus = error.response?.status;
+            if (failedKey === 401 || failedKey === 403) {
+                throw Object.assign(new Error('91短剧拒绝了播放密钥请求，请确认该集的站点登录和观看权限'), { statusCode: 403 });
+            }
+            const resource = failedKey ? '播放密钥' : '播放清单';
+            const status = upstreamStatus ? `（HTTP ${upstreamStatus}）` : '';
+            throw Object.assign(new Error(`91短剧源站${resource}暂时不可用${status}`), { statusCode: 502 });
+        }
+    }
 }
 
 async function search(request) {
@@ -190,50 +207,49 @@ export default {
         fastify.post('/home', home);
         fastify.post('/category', category);
         fastify.post('/detail', detail);
-        fastify.post('/play', play);
+        const proxyHls = registerHlsProxy(fastify, PLAY_HEADERS);
+        fastify.post('/play', (request) => play(request, proxyHls));
         fastify.post('/search', search);
-        fastify.get('/hls/:id/playlist.m3u8', async (request, reply) => {
-            const entry = playlistCache.get(request.params.id);
-            if (!entry || entry.expiresAt < Date.now()) return reply.code(404).send();
-            return reply.header('Cache-Control', 'no-store')
-                .header('Access-Control-Allow-Origin', '*')
-                .type('application/vnd.apple.mpegurl').send(entry.body);
-        });
-        fastify.get('/hls/:id/key/:index', async (request, reply) => {
-            const entry = playlistCache.get(request.params.id);
-            const index = Number(request.params.index);
-            if (!entry || entry.expiresAt < Date.now() || !Number.isInteger(index) || !entry.keys[index]) {
-                return reply.code(404).send();
-            }
-            const session = await saved91Session();
-            if (!session?.cookie) return reply.code(401).send();
-            const response = await axios.get(entry.keys[index], {
-                responseType: 'arraybuffer', timeout: 15000,
-                headers: { Cookie: session.cookie, Referer: `${SITE}/`, Origin: SITE, 'User-Agent': 'Mozilla/5.0' },
-            });
-            const key = Buffer.from(response.data);
-            if (key.length !== 16) throw new Error('91短剧返回了无效的播放密钥');
-            return reply.header('Cache-Control', 'no-store')
-                .header('Access-Control-Allow-Origin', '*')
-                .type('application/octet-stream').send(key);
-        });
         fastify.get('/image', async (request, reply) => {
             let url;
             try { url = new URL(Buffer.from(String(request.query?.url || ''), 'base64url').toString('utf8')); }
             catch { return reply.code(400).send(); }
             if (url.protocol !== 'https:' || url.hostname !== IMAGE_HOST) return reply.code(400).send();
-            let buffer = imageCache.get(url.href);
-            if (!buffer) {
-                const response = await axios.get(url.href, { responseType: 'arraybuffer', timeout: 15000 });
-                buffer = Buffer.from(response.data);
+            let image = imageCache.get(url.href);
+            if (!image) {
+                let response;
+                try {
+                    response = await fetchMedia(url.href, {
+                        responseType: 'arraybuffer', timeout: 8000, maxContentLength: 4 * 1024 * 1024,
+                    });
+                } catch {
+                    return reply.code(502).send();
+                }
+                const buffer = Buffer.from(response.data);
                 for (let index = 0; index < Math.min(100, buffer.length); index++) {
                     buffer[index] ^= IMAGE_KEY[index % IMAGE_KEY.length];
                 }
-                if (imageCache.size >= 100) imageCache.delete(imageCache.keys().next().value);
-                imageCache.set(url.href, buffer);
+                const type = coverType(buffer);
+                if (!type) return reply.code(502).send();
+                const etag = '"' + createHash('sha256').update(buffer).digest('hex') + '"';
+                image = { buffer, type, etag };
+                const existing = imageCache.get(url.href);
+                if (existing) {
+                    imageCacheBytes -= existing.buffer.length;
+                    imageCache.delete(url.href);
+                }
+                while (imageCache.size && imageCacheBytes + buffer.length > IMAGE_CACHE_LIMIT) {
+                    const oldest = imageCache.keys().next().value;
+                    imageCacheBytes -= imageCache.get(oldest).buffer.length;
+                    imageCache.delete(oldest);
+                }
+                imageCache.set(url.href, image);
+                imageCacheBytes += buffer.length;
             }
-            return reply.header('Cache-Control', 'private, max-age=3600')
-                .header('Access-Control-Allow-Origin', '*').type('image/jpeg').send(buffer);
+            reply.header('Cache-Control', 'public, max-age=86400')
+                .header('Access-Control-Allow-Origin', '*').header('ETag', image.etag);
+            if (request.headers['if-none-match'] === image.etag) return reply.code(304).send();
+            return reply.type(image.type).send(image.buffer);
         });
     },
 };

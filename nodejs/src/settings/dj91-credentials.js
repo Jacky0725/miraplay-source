@@ -13,17 +13,22 @@ export async function saved91Session() {
 }
 
 export async function request91(path, options = {}) {
-    const session = await saved91Session();
+    const url = new URL(path, SITE);
+    if (url.origin !== SITE) throw new Error('无效的91短剧站点地址');
+    const cookie = options.cookie ?? (await saved91Session())?.cookie;
     return axios({
-        url: new URL(path, SITE).href,
+        url: url.href,
         method: options.method || 'GET',
         data: options.data,
-        timeout: 20000,
+        timeout: options.timeout || 20000,
+        responseType: options.responseType,
+        maxContentLength: options.maxContentLength,
+        ...(options.responseType ? { maxRedirects: 0 } : {}),
         headers: {
             'User-Agent': 'Mozilla/5.0',
-            Referer: `${SITE}/`,
+            Referer: options.referer || `${SITE}/`,
             Accept: options.accept || 'text/html,application/json',
-            ...(session?.cookie ? { Cookie: session.cookie } : {}),
+            ...(cookie ? { Cookie: cookie } : {}),
             ...(options.data ? { 'Content-Type': 'application/json' } : {}),
         },
     });
