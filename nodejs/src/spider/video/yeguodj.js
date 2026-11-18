@@ -1,10 +1,11 @@
 import { requestYeguodj } from '../../settings/yeguodj-credentials.js';
-import { PLAIN_HOST, publicCover } from './cover-url.js';
 import { proxyCoverUrl, registerCoverProxy } from './cover-proxy.js';
 import { registerHlsProxy } from './hls-proxy.js';
+import { loadYeguodjCover, YEGUODJ_COVER_HOSTS } from './yeguodj-cover.js';
 
 const SITE = 'https://yeguodj.com';
 const PLAY_HEADERS = { Referer: SITE + '/', 'User-Agent': 'Mozilla/5.0' };
+const COVER_ROUTE = '/thumbnail';
 
 const MODULES = [
     ['module:3', '野果原创短剧'],
@@ -23,7 +24,13 @@ function allowed(item) {
 }
 
 function image(value, request) {
-    return proxyCoverUrl(publicCover(value, SITE), request, PLAIN_HOST);
+    if (!value) return '';
+    try {
+        const url = new URL(value, SITE);
+        if (!['https:', 'http:'].includes(url.protocol)) return '';
+        if (YEGUODJ_COVER_HOSTS.has(url.hostname)) url.protocol = 'https:';
+        return proxyCoverUrl(url, request, YEGUODJ_COVER_HOSTS, COVER_ROUTE);
+    } catch { return ''; }
 }
 
 function card(item, request) {
@@ -147,6 +154,6 @@ export default {
         const proxyHls = registerHlsProxy(fastify, PLAY_HEADERS);
         fastify.post('/play', (request) => play(request, proxyHls));
         fastify.post('/search', search);
-        registerCoverProxy(fastify, { host: PLAIN_HOST, headers: PLAY_HEADERS });
+        registerCoverProxy(fastify, { hosts: YEGUODJ_COVER_HOSTS, route: COVER_ROUTE, loadCover: loadYeguodjCover });
     },
 };

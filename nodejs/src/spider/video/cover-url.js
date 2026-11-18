@@ -1,5 +1,5 @@
 export const PLAIN_HOST = 'imgpublic.ycomesc.live';
-const ENCRYPTED_HOSTS = new Set([
+export const ENCRYPTED_HOSTS = new Set([
     'pic.wlwvch.cn', 'pic.wvxrrip.cn', 'pic.gyezbp.cn', 'pic.hdhwqx.cn', 'pic.nsxxlj.cn',
 ]);
 

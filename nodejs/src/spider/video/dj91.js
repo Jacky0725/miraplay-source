@@ -2,7 +2,7 @@ import * as cheerio from 'cheerio';
 import { request91, saved91Session } from '../../settings/dj91-credentials.js';
 import { allowedAdultMetadata, cleanEpisodeTitle } from './content-filter.js';
 import { registerHlsProxy, retryMedia } from './hls-proxy.js';
-import { proxyCoverUrl, registerCoverProxy } from './cover-proxy.js';
+import { fetchCover, proxyCoverUrl, registerCoverProxy } from './cover-proxy.js';
 
 const SITE = 'https://91dj66.com';
 const CHANNELS = [
@@ -11,7 +11,7 @@ const CHANNELS = [
     ['aimogai', 'AI魔改'],
     ['guzhuangguofeng', '古装国风'],
 ];
-const IMAGE_HOST = 'd3n8qx4rvy4vol.cloudfront.net';
+const COVER_HOSTS = new Set(['d3n8qx4rvy4vol.cloudfront.net']);
 const IMAGE_KEY = Buffer.from('2019ysapp7527');
 const PLAY_HEADERS = { Referer: SITE + '/', 'User-Agent': 'Mozilla/5.0' };
 
@@ -23,7 +23,7 @@ function image(value, request) {
     try {
         const url = new URL(value, SITE);
         if (!['https:', 'http:'].includes(url.protocol)) return '';
-        return proxyCoverUrl(url, request, IMAGE_HOST);
+        return proxyCoverUrl(url, request, COVER_HOSTS);
     } catch { return ''; }
 }
 
@@ -208,10 +208,12 @@ export default {
         const proxyHls = registerHlsProxy(fastify, PLAY_HEADERS);
         fastify.post('/play', (request) => play(request, proxyHls));
         fastify.post('/search', search);
-        registerCoverProxy(fastify, { host: IMAGE_HOST, decode: (buffer) => {
+        registerCoverProxy(fastify, { hosts: COVER_HOSTS, loadCover: async (url) => {
+            const buffer = await fetchCover(url);
             for (let index = 0; index < Math.min(100, buffer.length); index++) {
                 buffer[index] ^= IMAGE_KEY[index % IMAGE_KEY.length];
             }
+            return buffer;
         } });
     },
 };

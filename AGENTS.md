@@ -10,7 +10,7 @@
 - 51短剧和野果短剧的加密封面域名经 `cover-url.js` 换为站点公开的普通图片域名 `imgpublic.ycomesc.live`，保留原路径。野果首页封面已使用过 `pic.hdhwqx.cn` 和 `pic.nsxxlj.cn`；站点更换图片域名后需核对并更新映射。先前生成的 `51hub.com/_img/...` 地址实测返回 404，不要恢复该代理方式。
 - `nodejs/src/settings/hub51-credentials.js` 处理 51短剧用户名和密码登录，把站点返回的令牌附加在 51短剧的 API 请求体。配置中心为该站点提供独立的状态、登录和退出入口。本机数据库按用户此前要求明文保存并显示密码；不得把实际凭据或令牌提交到公开仓库。
 - `nodejs/src/spider/video/xiangjiao.js` 是香蕉短剧独立站点。`nodejs/src/settings/xiangjiao-credentials.js` 管理游客会话以及本机保存的账号会话，播放时向网站申请临时播放地址。站点的 HLS 清单含 `data:` 格式的 AES-128 密钥，规则将清单和密钥暂存在本机并提供 HTTP 地址给播放器；视频片段仍直接从网站 CDN 读取。列表、分类和详情使用共同的基础内容筛选，避免泛化词导致首页全空。
-- `nodejs/src/spider/video/yeguodj.js` 是野果短剧独立站点。`nodejs/src/settings/yeguodj-credentials.js` 管理本机账号，沿用站点公开的 AES-CBC 接口参数。封面使用 `cover-url.js` 指向普通图片域名，由 `cover-proxy.js` 向客户端提供图片缓存响应。筛除含未成年人暗示及强迫等标签的条目，正片地址在播放时重新请求。
+- `nodejs/src/spider/video/yeguodj.js` 是野果短剧独立站点。`nodejs/src/settings/yeguodj-credentials.js` 管理本机账号，沿用站点公开的 AES-CBC 接口参数。封面优先读普通图片域名，失败时用站点的公开图片解码规则处理原图。大封面转换成缩略图，由 `cover-proxy.js` 提供缓存响应。筛除含未成年人暗示及强迫等标签的条目，正片地址在播放时重新请求。
 - `nodejs/src/spider/video/javday.js` 和 `nodejs/src/spider/video/dj91.js` 是独立站点；配套登录状态在 `nodejs/src/settings/` 对应文件中。两者必须在列表、详情和播放三处应用 `content-filter.js`：普通模式不凭“学生”“校园”“少女”“制服”等泛化词拦截；不要把不同元数据字段或句段中的词拼成一个风险短语。明确的未成年人指向、同一描述中明确的未成年人场景与性行为，以及明确的乱伦和性侵内容仍须筛除。播放时只提取站点提供的 HLS 地址，不运行网页广告脚本。
 - 配置中心的“严格筛选”默认关闭，可手动开启附加泛化词筛选；基础筛选始终生效。本机数据库保存模式，公开脚本不保存个人设置。
 - 91短剧加密封面通过本机 `/image?url=` 路由解码，响应带实际图片类型和 ETag；长编码地址使用查询参数以兼容 Fastify 路径长度限制。91短剧选集同时读取播放链接和带 `data-chapter-id` 的受限选集，实际播放按源站账号权限执行。91短剧和野果短剧默认走 `hls-proxy.js` 的本机 HLS 线路，另有原站直连。91短剧使用站点认可的登录或游客会话请求清单和同站密钥，分片请求不带该会话 Cookie。
