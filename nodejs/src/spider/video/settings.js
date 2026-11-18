@@ -10,7 +10,6 @@ import {
     loginYeguodj, logoutYeguodj, savedYeguodjSession, useYeguodjDatabase,
 } from '../../settings/yeguodj-credentials.js';
 import { loginJavday, logoutJavday, savedJavdaySession, useJavdayDatabase } from '../../settings/javday-credentials.js';
-import { login91, logout91, saved91Session, use91Database } from '../../settings/dj91-credentials.js';
 import { contentFilterMode, setContentFilterMode, useContentFilterDatabase } from './content-filter.js';
 
 const ENTRY = { vod_id: 'settings', vod_name: '配置中心', vod_pic: '', vod_remarks: '管理网站账号' };
@@ -26,7 +25,7 @@ main{max-width:580px;margin:auto;padding:24px}h1{font-size:26px;margin:10px 0 8p
 label{display:block;margin:14px 0 7px}input{box-sizing:border-box;width:100%;padding:12px;border:1px solid #455062;
 border-radius:9px;background:#151a23;color:white;font-size:16px}button{border:0;border-radius:9px;
 padding:11px 17px;margin:17px 8px 0 0;background:#5df2b8;color:#12201b;font-weight:700;font-size:15px}
-button.secondary{background:#444f60;color:white}button:disabled{opacity:.6}#message,#message51,#messageXj,#messageYg,#messageJd,#message91,#filterMessage{min-height:22px;white-space:pre-wrap}
+button.secondary{background:#444f60;color:white}button:disabled{opacity:.6}#message,#message51,#messageXj,#messageYg,#messageJd,#filterMessage{min-height:22px;white-space:pre-wrap}
 </style></head><body><main><h1>配置中心</h1>
 <p class="muted">此页面运行在 MiraPlay 本机。按你的设置，密码会在本机明文保存和显示；公开脚本中不包含你的账号、密码或登录令牌。</p>
 <section class="card"><h2>橙果短剧</h2><p id="status" class="muted">正在读取状态…</p>
@@ -55,12 +54,7 @@ button.secondary{background:#444f60;color:white}button:disabled{opacity:.6}#mess
 <label for="passwordJd">密码（明文显示）</label><input id="passwordJd" type="text" autocomplete="off" required>
 <button id="submitJd" type="submit">登录</button><button id="logoutJd" type="button" class="secondary">退出登录</button></form>
 <p id="messageJd" role="status"></p></section>
-<section class="card"><h2>91短剧</h2><p id="status91" class="muted">正在读取状态…</p>
-<form id="login91"><label for="username91">用户名</label><input id="username91" autocomplete="username" required>
-<label for="password91">密码（明文显示）</label><input id="password91" type="text" autocomplete="off" required>
-<button id="submit91" type="submit">登录</button><button id="logout91" type="button" class="secondary">退出登录</button></form>
-<p id="message91" role="status"></p></section>
-<section class="card"><h2>内容筛选</h2><p class="muted">JAVDAY 和 91短剧可选严格筛选。开启后会额外隐藏含“学生”“校园”“制服”等泛化词的条目；关闭后仍保留明确的未成年人色情及其他高风险内容筛选。</p>
+<section class="card"><h2>内容筛选</h2><p class="muted">JAVDAY 可选严格筛选。开启后会额外隐藏含“学生”“校园”“制服”等泛化词的条目；关闭后仍保留明确的未成年人色情及其他高风险内容筛选。</p>
 <label><input id="strictFilter" type="checkbox" style="width:auto;margin-right:8px">开启严格筛选</label>
 <p id="filterMessage" role="status"></p></section>
 <section class="card"><h2>其他影视源</h2><p class="muted">以后新增的站点会作为独立条目出现在同一猫源菜单中，并在此处提供各自的账号配置。</p></section>
@@ -151,7 +145,7 @@ function connectAccount(suffix,path){
  try{await submit('logout',{});}catch{notice.textContent='连接失败，请稍后重试';}});
  refresh().catch(()=>{status.textContent='无法读取状态';});
 }
-connectAccount('Jd','jd');connectAccount('91','91');
+connectAccount('Jd','jd');
 async function refreshFilter(){const r=await fetch('website/api/filter',{cache:'no-store',headers:{'X-Config-Token':secret}});
 const d=await r.json();if(!r.ok)throw new Error(d.message||'无法读取筛选设置');
 document.getElementById('strictFilter').checked=d.mode==='strict';}
@@ -174,7 +168,6 @@ export default {
         useXiangjiaoDatabase(fastify.db);
         useYeguodjDatabase(fastify.db);
         useJavdayDatabase(fastify.db);
-        use91Database(fastify.db);
         await useContentFilterDatabase(fastify.db);
         const secret = randomBytes(32).toString('hex');
         const authorized = (request) => {
@@ -299,7 +292,6 @@ export default {
         });
         for (const [path, saved, login, logout] of [
             ['jd', savedJavdaySession, loginJavday, logoutJavday],
-            ['91', saved91Session, login91, logout91],
         ]) {
             fastify.get(`/website/api/${path}/status`, async (request, reply) => {
                 if (!authorized(request)) return reply.code(403).send({ message: '配置页面已过期，请重新打开' });

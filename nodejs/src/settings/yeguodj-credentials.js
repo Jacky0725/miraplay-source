@@ -20,11 +20,13 @@ export async function requestYeguodj(path, params = {}, token = undefined) {
     const body = { ...params };
     const accessToken = token === undefined ? session?.token : token;
     if (accessToken) body.token = accessToken;
+    const playback = path === '/api/playlet/detail' || path === '/api/playlet/play';
+    const retryable = playback || /^\/api\/(?:home\/|theater\/|search\/)/.test(path);
     let response;
     for (let attempt = 0; attempt < 2; attempt++) {
         try {
             response = await axios.post(`${API}${path}`, new URLSearchParams(body), {
-                timeout: 20000,
+                timeout: playback ? 6000 : 20000,
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
                     Origin: SITE,
@@ -34,8 +36,14 @@ export async function requestYeguodj(path, params = {}, token = undefined) {
             });
             break;
         } catch (error) {
-            if (attempt || !/^\/api\/(?:home\/|theater\/|search\/)/.test(path) ||
-                ![502, 503, 504].includes(error.response?.status)) throw error;
+            const gateway = [502, 503, 504].includes(error.response?.status);
+            const network = playback && ['ECONNABORTED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN'].includes(error.code);
+            if (attempt || !retryable || !(gateway || network) || error.response?.headers?.['retry-after']) {
+                if (!playback) throw error;
+                const status = error.response?.status;
+                const suffix = status ? `（HTTP ${status}）` : '';
+                throw Object.assign(new Error(`野果短剧播放接口暂时不可用${suffix}`), { statusCode: 502 });
+            }
             await new Promise((resolve) => setTimeout(resolve, 500));
         }
     }

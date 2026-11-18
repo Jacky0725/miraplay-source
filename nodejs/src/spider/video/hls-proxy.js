@@ -3,14 +3,10 @@ import { randomUUID } from 'crypto';
 
 const PLAYLIST_LIFETIME = 15 * 60 * 1000;
 
-export async function fetchMedia(url, options) {
-    return retryMedia(() => axios.get(url, options));
-}
-
-export async function retryMedia(fetch) {
+async function fetchMedia(url, options) {
     for (let attempt = 0; ; attempt++) {
         try {
-            return await fetch();
+            return await axios.get(url, options);
         } catch (error) {
             const status = error.response?.status;
             const temporary = status === 408 || status >= 500 ||
@@ -22,15 +18,15 @@ export async function retryMedia(fetch) {
 }
 
 async function compatiblePlaylist(url, request, playlists, headers, options) {
-    const { fetchManifest, fetchKey, keyOrigin, stripWatermarkTag } = options;
+    const { signal, stripWatermarkTag } = options;
     const port = request.server.address?.()?.port || request.server.server.address()?.port ||
         request.raw.socket.localPort;
     if (!port) return url;
 
-    const response = await (fetchManifest ? fetchManifest(url) : fetchMedia(url, {
+    const response = await fetchMedia(url, {
         headers: { ...headers, Accept: 'application/vnd.apple.mpegurl, */*' },
-        responseType: 'text', timeout: 8000, maxContentLength: 2 * 1024 * 1024,
-    }));
+        signal, responseType: 'text', timeout: 8000, maxContentLength: 2 * 1024 * 1024,
+    });
     const manifest = response.data.trimStart();
     if (!manifest.startsWith('#EXTM3U')) throw new Error('源站返回了无效的播放清单');
     if (!manifest.includes('#EXTINF:') || manifest.includes('#EXT-X-STREAM-INF:')) return url;
@@ -52,16 +48,16 @@ async function compatiblePlaylist(url, request, playlists, headers, options) {
         return entry.replace(/([:,])URI="([^"]+)"/g, (_match, separator, raw) => {
             const resolved = new URL(raw, manifestUrl);
             if (!entry.startsWith('#EXT-X-KEY:') || !/(?:[:,])METHOD=AES-128(?:,|$)/.test(entry) ||
-                resolved.protocol !== 'https:' || (keyOrigin && resolved.origin !== keyOrigin)) return `${separator}URI="${resolved.href}"`;
+                resolved.protocol !== 'https:') return `${separator}URI="${resolved.href}"`;
             if (!keyUrls.has(resolved.href)) keyUrls.set(resolved.href, keyUrls.size);
             return `${separator}URI="${base}/key/${keyUrls.get(resolved.href)}"`;
         });
     }).join('\n');
 
     const keys = await Promise.all(Array.from(keyUrls.keys(), async (keyUrl) => {
-        const response = await (fetchKey ? fetchKey(keyUrl) : fetchMedia(keyUrl, {
-            headers, responseType: 'arraybuffer', timeout: 8000, maxContentLength: 64 * 1024,
-        }));
+        const response = await fetchMedia(keyUrl, {
+            headers, signal, responseType: 'arraybuffer', timeout: 8000, maxContentLength: 64 * 1024,
+        });
         if (response.data.length !== 16) throw new Error('源站返回了无效的播放密钥');
         return Buffer.from(response.data);
     }));

@@ -1,5 +1,4 @@
 import { createHash } from 'crypto';
-import { fetchMedia } from './hls-proxy.js';
 
 const MAX_BYTES = 24 * 1024 * 1024;
 const MAX_AGE = 24 * 60 * 60;
@@ -25,13 +24,6 @@ export function proxyCoverUrl(value, request, hosts, route = '/image') {
     if (!port) return url.href;
     const encoded = Buffer.from(url.href).toString('base64url');
     return `http://127.0.0.1:${port}${request.server.prefix}${route}?url=${encoded}`;
-}
-
-export async function fetchCover(url, headers, timeout = 8000) {
-    const result = await fetchMedia(url, {
-        headers, responseType: 'arraybuffer', timeout, maxContentLength: 5 * 1024 * 1024, maxRedirects: 0,
-    });
-    return Buffer.from(result.data);
 }
 
 export function registerCoverProxy(fastify, { hosts, route = '/image', loadCover }) {

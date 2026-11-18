@@ -119,17 +119,30 @@ async function play(request, proxyHls) {
     const detail = await requestYeguodj('/api/playlet/detail', {
         video_id: playletId, id: playletId, episode_id: 0, related_limit: 0,
     });
-    if (!allowed(detail) || !(detail.episodes || []).some((episode) => String(episode.id) === episodeId)) {
+    if (!allowed(detail) || !Array.isArray(detail.episodes) ||
+        !detail.episodes.some((episode) => String(episode.id) === episodeId)) {
         return { parse: 0, url: '' };
     }
     const data = await requestYeguodj('/api/playlet/play', {
         playlet_id: playletId, video_id: playletId, episode_id: episodeId,
     });
-    const url = String(data.video_url || '').trim();
-    if (!/^https?:\/\//i.test(url)) return { parse: 0, url: '' };
+    if (data.access?.can_play === false) {
+        throw Object.assign(new Error('野果短剧未授权播放该集，请检查登录或该集的观看权限'), { statusCode: 403 });
+    }
+    const url = [data.video_url, data.video_url_h265].find((value) => {
+        if (typeof value !== 'string') return false;
+        try { return ['https:', 'http:'].includes(new URL(value).protocol); }
+        catch { return false; }
+    })?.trim();
+    if (!url) throw Object.assign(new Error('野果短剧源站未返回播放地址'), { statusCode: 502 });
     if (!direct && new URL(url).pathname.toLowerCase().endsWith('.m3u8')) {
-        const compatible = await proxyHls(url, request);
-        if (compatible !== url) return { parse: 0, url: compatible };
+        try {
+            const compatible = await proxyHls(url, request, { signal: AbortSignal.timeout(4500) });
+            if (compatible !== url) return { parse: 0, url: compatible };
+        } catch (error) {
+            request.log.warn({ upstreamStatus: error.response?.status, networkCode: error.code },
+                '野果短剧本机播放清单不可用，返回源站下发的播放地址');
+        }
     }
     return { parse: 0, url, header: PLAY_HEADERS };
 }

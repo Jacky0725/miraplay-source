@@ -9,9 +9,6 @@ const categories = [
     { site: 'JAVDAY', host: 'https://javday.app', id: 'aiav', max: Number(process.env.JAVDAY_PAGE_LIMIT || 0) },
     { site: 'JAVDAY', host: 'https://javday.app', id: 'censored', max: Number(process.env.JAVDAY_PAGE_LIMIT || 3) },
     { site: 'JAVDAY', host: 'https://javday.app', id: 'uncensored-leaked', max: Number(process.env.JAVDAY_PAGE_LIMIT || 0) },
-    { site: '91短剧', host: 'https://91dj66.com', id: 'chengrenduanju', max: Number(process.env.DJ91_PAGE_LIMIT || 0) },
-    { site: '91短剧', host: 'https://91dj66.com', id: 'aimogai', max: Number(process.env.DJ91_PAGE_LIMIT || 0) },
-    { site: '91短剧', host: 'https://91dj66.com', id: 'guzhuangguofeng', max: Number(process.env.DJ91_PAGE_LIMIT || 0) },
 ];
 const records = new Map();
 const entries = new Map();
@@ -54,63 +51,36 @@ function addItem(item) {
 }
 
 function pathFor(category, page) {
-    if (category.site === 'JAVDAY') return `/category/${category.id}/page/${page}/`;
-    return `/more/${category.id}${page > 1 ? `/page/${page}` : ''}`;
+    return `/category/${category.id}/page/${page}/`;
 }
 
-function totalPages(category, $) {
-    if (category.site === '91短剧') return Number($('[data-catalog-pagination]').attr('data-total')) || 1;
+function totalPages($) {
     return Math.max(1, ...$('.layui-laypage a[href]').map((_index, node) =>
         Number(($(node).attr('href') || '').match(/\/page\/(\d+)\//)?.[1] || 0)).get());
 }
 
 function collect(category, page, $) {
-    if (category.site === 'JAVDAY') {
-        $('a.videoBox[href^="/videos/"]').each((_index, node) => {
-            const item = $(node);
-            const id = (item.attr('href') || '').match(/^\/videos\/([a-zA-Z0-9]+)\/?$/)?.[1];
-            if (id) addItem({ site: category.site, id, category: category.id, page,
-                listText: [item.find('.videoBox-info .title').text().trim()] });
-        });
-    } else {
-        $('a[href^="/detail/"]').each((_index, node) => {
-            const item = $(node);
-            const id = (item.attr('href') || '').match(/^\/detail\/([a-zA-Z0-9-]+)\/?$/)?.[1];
-            const title = item.find('h3').first().text().trim() || item.attr('aria-label') || '';
-            const label = item.find('.home-card-meta').text().trim() || item.find('.home-reel-meta').text().trim();
-            if (id) addItem({ site: category.site, id, category: category.id, page,
-                listText: [title, label] });
-        });
-    }
+    $('a.videoBox[href^="/videos/"]').each((_index, node) => {
+        const item = $(node);
+        const id = (item.attr('href') || '').match(/^\/videos\/([a-zA-Z0-9]+)\/?$/)?.[1];
+        if (id) addItem({ site: category.site, id, category: category.id, page,
+            listText: [item.find('.videoBox-info .title').text().trim()] });
+    });
 }
 
 async function inspectDetail(item) {
-    const base = item.site === 'JAVDAY' ? 'https://javday.app' : 'https://91dj66.com';
-    const url = item.site === 'JAVDAY' ? `${base}/videos/${item.id}/` : `${base}/detail/${item.id}`;
-    const $ = await html(url);
-    if (item.site === 'JAVDAY') {
-        const info = [
-            $('h1.video-title').first().text().trim(),
-            $('meta[property="og:title"]').attr('content') || '',
-            $('meta[property="og:description"]').attr('content') ||
-                $('meta[name="description"]').attr('content') || '',
-            $('.videoInfo, .video-detail').text().trim(),
-        ];
-        mark(item, '详情/播放', flaggedAdultTerms(...info));
-        $('.episode-btn[data-url]').each((_index, node) => {
-            mark(item, '选集', flaggedAdultTerms($(node).attr('data-name') || $(node).text().trim()));
-        });
-    } else {
-        const info = [
-            $('.detail-title').first().text().trim() || $('meta[property="og:title"]').attr('content') || '',
-            $('.detail-intro').first().text().trim() || $('meta[name="description"]').attr('content') || '',
-            $('.detail-tag, .detail-tags, .detail-meta').text().trim(),
-        ];
-        mark(item, '详情/播放', flaggedAdultTerms(...info));
-        $(`a[href^="/play/${item.id}/"]`).each((_index, node) => {
-            mark(item, '选集', flaggedAdultTerms($(node).text().trim()));
-        });
-    }
+    const $ = await html('https://javday.app/videos/' + item.id + '/');
+    const info = [
+        $('h1.video-title').first().text().trim(),
+        $('meta[property="og:title"]').attr('content') || '',
+        $('meta[property="og:description"]').attr('content') ||
+            $('meta[name="description"]').attr('content') || '',
+        $('.videoInfo, .video-detail').text().trim(),
+    ];
+    mark(item, '详情/播放', flaggedAdultTerms(...info));
+    $('.episode-btn[data-url]').each((_index, node) => {
+        mark(item, '选集', flaggedAdultTerms($(node).attr('data-name') || $(node).text().trim()));
+    });
 }
 
 for (const category of categories) {
@@ -118,7 +88,7 @@ for (const category of categories) {
     let scanned = 0;
     try {
         const first = await html(`${category.host}${pathFor(category, 1)}`);
-        total = totalPages(category, first);
+        total = totalPages(first);
         const limit = category.max > 0 ? Math.min(category.max, total) : total;
         collect(category, 1, first);
         scanned = 1;
