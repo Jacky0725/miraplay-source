@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 
 const PLAYLIST_LIFETIME = 15 * 60 * 1000;
 
-async function fetchMedia(url, options) {
+export async function fetchMedia(url, options) {
     for (let attempt = 0; ; attempt++) {
         try {
             return await axios.get(url, options);

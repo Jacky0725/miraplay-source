@@ -2,6 +2,7 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { savedSession } from '../../settings/credentials.js';
 import { registerHlsProxy } from './hls-proxy.js';
+import { registerChengguodjDownloads } from './chengguodj-download.js';
 
 const BASE = 'https://chengguodj.com';
 const PLAY_HEADERS = { Referer: `${BASE}/`, 'User-Agent': 'Mozilla/5.0' };
@@ -136,8 +137,7 @@ async function detail(inReq, directPlayback) {
     episodes.sort((a, b) => Number(a.n) - Number(b.n));
     const name = $('h1').first().text().trim() || (drama ? data[drama.title] : slug);
     const intro = drama && typeof drama.intro === 'number' ? String(data[drama.intro] || '') : '';
-    const episodeList = episodes.map(({ n, id }) => `第${n}集$${id}`).join('#');
-    const hasDirectLine = !directPlayback && episodes.length > 0;
+    const prefixes = !directPlayback && episodes.length ? ['', 'direct:', 'download:'] : [''];
     return {
         list: [{
             vod_id: slug,
@@ -146,23 +146,30 @@ async function detail(inReq, directPlayback) {
             type_name: drama && typeof drama.channel === 'number' ? String(data[drama.channel]?.name || '') : '',
             vod_content: intro || $('meta[name="description"]').attr('content') || '',
             vod_remarks: `共${episodes.length}集`,
-            vod_play_from: hasDirectLine ? '橙果短剧$$$原站直连' : '橙果短剧',
-            vod_play_url: hasDirectLine ? `${episodeList}$$$${episodes.map(({ n, id }) => `第${n}集$direct:${id}`).join('#')}` : episodeList,
+            vod_play_from: ['橙果短剧', '原站直连', 'MP4 下载'].slice(0, prefixes.length).join('$$$'),
+            vod_play_url: prefixes.map((prefix) => episodes.map(({ n, id }) => `第${n}集$${prefix}${id}`).join('#')).join('$$$'),
         }],
     };
 }
 
-async function play(inReq, proxyHls) {
-    const raw = String(inReq.body?.id || '');
-    const direct = raw.startsWith('direct:');
-    const id = direct ? raw.slice('direct:'.length) : raw;
-    if (!EPISODE_ID.test(id)) return { parse: 0, url: '' };
+async function sourceUrl(id) {
     const $ = await fetchPage(`/play/${id}`);
     const data = nuxtData($);
     const media = data.find((item) => item && typeof item === 'object' &&
         Object.prototype.hasOwnProperty.call(item, 'source_url'));
     const url = media && typeof media.source_url === 'number' ? data[media.source_url] : '';
-    if (!url || !/^https?:\/\//.test(url)) return { parse: 0, url: '' };
+    return typeof url === 'string' && /^https?:\/\//.test(url) ? url : '';
+}
+
+async function play(inReq, proxyHls, prepareDownload) {
+    const raw = String(inReq.body?.id || '');
+    const direct = raw.startsWith('direct:');
+    const download = raw.startsWith('download:');
+    const id = raw.replace(/^(?:direct:|download:)/, '');
+    if (!EPISODE_ID.test(id)) return { parse: 0, url: '' };
+    if (download) return { parse: 0, url: prepareDownload?.(id, () => sourceUrl(id), inReq) || '' };
+    const url = await sourceUrl(id);
+    if (!url) return { parse: 0, url: '' };
     let playableUrl = url;
     if (proxyHls && !direct && new URL(url).pathname.toLowerCase().endsWith('.m3u8')) {
         try {
@@ -187,11 +194,12 @@ export default {
     meta: { key: 'chengguodj', name: '橙果短剧', type: 3, searchable: 1, quickSearch: 1 },
     api: async (fastify, options) => {
         const proxyHls = options.directPlayback ? null : registerHlsProxy(fastify, PLAY_HEADERS);
+        const prepareDownload = options.directPlayback ? null : registerChengguodjDownloads(fastify, PLAY_HEADERS);
         fastify.post('/init', init);
         fastify.post('/home', home);
         fastify.post('/category', category);
         fastify.post('/detail', (request) => detail(request, options.directPlayback));
-        fastify.post('/play', (request) => play(request, proxyHls));
+        fastify.post('/play', (request) => play(request, proxyHls, prepareDownload));
         fastify.post('/search', search);
     },
 };

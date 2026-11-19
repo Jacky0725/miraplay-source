@@ -15,6 +15,7 @@
 - 配置中心的“严格筛选”默认关闭，可手动开启附加泛化词筛选；基础筛选始终生效。本机数据库保存模式，公开脚本不保存个人设置。
 - 野果短剧默认走 `hls-proxy.js` 的本机 HLS 线路。播放器请求本机清单时才向 CDN 加载，失败时通过同一剧集接口重新取得源站签发的地址；另有原站直连线路。
 - 橙果短剧分类翻页使用 `/page-2` 等路径，不能使用 `?page=2`；搜索页封面在 Nuxt 数据中可能是字符串或带 `url` 的对象。
+- 橙果短剧另有“MP4 下载”线路，由 `chengguodj-download.js` 使用站点下发的清单与密钥将 H.264/AAC TS 分片封装为 MP4，支持 HEAD 和单段 Range。文件在 MiraPlay 本机临时生成，首次请求须等待打包；本机服务需持续运行。
 - JAVDAY 的剧集页有两种播放结构：短剧页面提供 `.episode-btn[data-url]`，单条视频页面仅在内联播放器配置中提供 `url: '...m3u8'`。两种结构均需读取，且只接受 `javday.homes` 的 HLS 地址。公开内容不依赖登录。
 - 视频规则不调用各站的广告列表 API 或网页广告脚本，不将广告条目加入播放列表。上游若在正片 HLS 中拼接广告，不能仅凭规则可靠跳过。
 - `nodejs/src/spider/video/settings.js` 注册独立的 `配置|中心` 站点，并通过 MiraPlay 的 `openInternalWebview` 动作打开本机配置页。新影视源作为独立 spider 添加到 `nodejs/src/router.js` 的 `spiders` 数组。
